@@ -30,6 +30,7 @@ import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewS
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserLayoutZoomFactor } from "./useBrowserLayoutZoomFactor";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
+import { returnFocusFromHiddenWebview } from "./webviewFocus";
 import {
   INITIAL_WEBVIEW_CRASH_RECOVERY_STATE,
   planWebviewCrashRecovery,
@@ -218,6 +219,20 @@ export function HostedBrowserWebview(props: {
     config,
     runtimeTabId,
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A crash recovery remounts the webview under a new key, so the listeners attach to the new element.
+    webviewGeneration,
+  ]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches a focus listener while the guest webview is hidden
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (shown || !clientSettingsHydrated || !config || !webview) return;
+    webview.addEventListener("focus", returnFocusFromHiddenWebview);
+    return () => webview.removeEventListener("focus", returnFocusFromHiddenWebview);
+  }, [
+    shown,
+    clientSettingsHydrated,
+    config,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Crash recovery replaces the webview element without changing its visibility.
     webviewGeneration,
   ]);
 
