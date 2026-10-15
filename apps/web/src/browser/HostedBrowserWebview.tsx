@@ -25,6 +25,7 @@ import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewS
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserLayoutZoomFactor } from "./useBrowserLayoutZoomFactor";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
+import { returnFocusFromHiddenWebview } from "./webviewFocus";
 import {
   INITIAL_WEBVIEW_CRASH_RECOVERY_STATE,
   planWebviewCrashRecovery,
@@ -204,6 +205,21 @@ export function HostedBrowserWebview(props: {
   ]);
 
   const active = presentation.visible && presentation.rect !== null;
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches a focus listener while the guest webview is hidden
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (active || !clientSettingsHydrated || !config || !webview) return;
+    webview.addEventListener("focus", returnFocusFromHiddenWebview);
+    return () => webview.removeEventListener("focus", returnFocusFromHiddenWebview);
+  }, [
+    active,
+    clientSettingsHydrated,
+    config,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Crash recovery replaces the webview element without changing its visibility.
+    webviewGeneration,
+  ]);
+
   const lastRect = presentation.rect;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(zoomFactor);
   const viewportWidth = viewport._tag === "fill" ? null : viewport.width;
