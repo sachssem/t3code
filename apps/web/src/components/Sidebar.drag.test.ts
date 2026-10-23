@@ -656,6 +656,52 @@ describe("sidebar drag projection", () => {
     expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(-46);
   });
 
+  it("keeps unread settled rows in shelf order alongside the route row during a drag", () => {
+    const items = [
+      pinnedHeader,
+      divider,
+      thread("a", "active"),
+      settledHeader,
+      thread("unread", "settled"),
+      thread("route", "settled"),
+    ];
+    const result = preview(
+      {
+        items,
+        settledOrder: ["unread", "hidden", "route"],
+        settledExpanded: false,
+        routeThreadKey: "route",
+        keepSettledVisible: (key) => key === "unread",
+      },
+      "a",
+      "route",
+    );
+    expect(result.get("unread")?.scaleY).toBe(1);
+    expect(result.get("route")?.scaleY).toBe(1);
+    expect(result.get("unread")?.y).toBe(result.get("route")?.y);
+  });
+
+  it("keeps an unread active row visible when dropped into a collapsed settled shelf", () => {
+    const items = [
+      pinnedHeader,
+      divider,
+      thread("a", "active"),
+      settledHeader,
+      marker("settled-placeholder"),
+    ];
+    const result = preview(
+      {
+        items,
+        settledOrder: ["hidden", "a"],
+        settledExpanded: false,
+        keepSettledVisible: (key) => key === "a",
+      },
+      "a",
+      sidebarMarkerId("settled-placeholder"),
+    );
+    expect(result.get(sidebarMarkerId("settled-placeholder"))?.scaleY).toBe(0);
+  });
+
   it("preserves hidden snoozed membership when the only rendered route row leaves", () => {
     const items = [
       pinnedHeader,
