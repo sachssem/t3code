@@ -51,6 +51,7 @@ import {
 } from "lucide-react";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
+
 import * as Schema from "effect/Schema";
 import {
   createContext,
@@ -67,6 +68,12 @@ import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { m, type MessageResolver } from "~/i18n/messages";
 
 import { observeIntersection } from "~/lib/observeIntersection";
+import { isCommandPaletteOpen } from "~/commandPaletteBus";
+import { resolveShortcutCommand } from "~/keybindings";
+import { isEditableFocused } from "~/lib/editableFocus";
+import { isTerminalFocused } from "~/lib/terminalFocus";
+import { primaryServerKeybindingsAtom } from "~/state/server";
+import { getHoveredPullRequestDiff } from "./pullRequestViewedShortcut";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
@@ -1111,6 +1118,44 @@ function PullRequestCodeTab({
       setFoldChoices(file.path, (current) => withFileDiffFold(current, file.foldKey, collapsed));
     }
   };
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const toggleHoveredFileViewed = useEffectEvent((event: KeyboardEvent) => {
+    if (
+      !filesViewedEnabled ||
+      event.defaultPrevented ||
+      event.isComposing ||
+      isCommandPaletteOpen()
+    ) {
+      return;
+    }
+    const command = resolveShortcutCommand(event, keybindings, {
+      context: {
+        terminalFocus: isTerminalFocused(),
+        editableFocus: isEditableFocused(event.target),
+      },
+    });
+    if (command !== "pullRequest.toggleViewed") return;
+    const host = getHoveredPullRequestDiff();
+    if (host === null) return;
+    const fileKey = viewer
+      ?.getInstance()
+      ?.getRenderedItems()
+      .find((rendered) => rendered.element === host)?.id;
+    const item = items.find((candidate) => candidate.id === fileKey);
+    if (item === undefined) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.repeat) return;
+    const path = resolveFileDiffPath(item.fileDiff);
+    setFileViewed(item.id, !isFileViewed(path), event.shiftKey);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the viewed shortcut while the PR viewer is mounted
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => toggleHoveredFileViewed(event);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
   const fileViewedToggle = {
     enabled: filesViewedEnabled,
     isViewed: isFileViewed,
@@ -2022,6 +2067,7 @@ function PullRequestCodeTab({
           onPointerDownCapture={codeViewReveal.cancel}
           onKeyDownCapture={codeViewReveal.cancel}
           // Headers live in shadow DOM; composedPath crosses that boundary.
+          data-pull-request-viewed-shortcut={filesViewedEnabled ? "" : undefined}
           onClickCapture={(event) => {
             const composedPath = event.nativeEvent.composedPath?.() ?? [];
             for (const node of composedPath) {

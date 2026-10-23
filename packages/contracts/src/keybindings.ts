@@ -73,6 +73,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "rightPanel.close",
   "view.reopenClosed",
   "pullRequest.copyNumber",
+  "pullRequest.toggleViewed",
   "diff.toggle",
   "preview.toggle",
   "preview.refresh",
