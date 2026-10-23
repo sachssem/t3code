@@ -1,3 +1,4 @@
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { isThreadWorking as isSidebarThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import * as DateTime from "effect/DateTime";
@@ -8,6 +9,8 @@ import { AsyncResult } from "effect/reactivity";
 import {
   shouldCreateNewThreadInCurrentProject,
   archiveSelectedThreadEntries,
+  collapsedShelfThreads,
+  resolveThreadLastVisitedAt,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
@@ -38,7 +41,6 @@ import {
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   sortActiveThreadsByOrderKey,
   sortPinnedThreadsByOrderKey,
@@ -1708,5 +1710,52 @@ describe("shouldCreateNewThreadInCurrentProject", () => {
     expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
+  });
+});
+
+describe("collapsedShelfThreads", () => {
+  const shelf = ["t1", "t2", "t3"].map((id) => ({
+    environmentId: localEnvironmentId,
+    id: ThreadId.make(id),
+  }));
+  const keyOf = (id: string) =>
+    scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make(id)));
+  const ids = (threads: readonly { id: ThreadId }[]) => threads.map((thread) => thread.id);
+
+  it("keeps only the open thread when nothing else qualifies", () => {
+    expect(ids(collapsedShelfThreads(shelf, keyOf("t2")))).toEqual(["t2"]);
+    expect(collapsedShelfThreads(shelf, null)).toBe(collapsedShelfThreads(shelf, keyOf("t9")));
+  });
+
+  it("keeps unread threads in shelf order and folds them once read", () => {
+    const unread = new Set([keyOf("t3"), keyOf("t1")]);
+    const keepUnread = (_thread: unknown, key: string) => unread.has(key);
+    expect(ids(collapsedShelfThreads(shelf, null, keepUnread))).toEqual(["t1", "t3"]);
+    unread.delete(keyOf("t3"));
+    expect(ids(collapsedShelfThreads(shelf, keyOf("t3"), keepUnread))).toEqual(["t1", "t3"]);
+    expect(ids(collapsedShelfThreads(shelf, keyOf("t2"), keepUnread))).toEqual(["t1", "t2"]);
+  });
+
+  it("distinguishes the same thread id in different environments", () => {
+    const remote = { ...shelf[0]!, environmentId: EnvironmentId.make("remote") };
+    expect(collapsedShelfThreads([...shelf, remote], keyOf("t1"))).toEqual([shelf[0]]);
+  });
+
+  it("uses server visits for unread visibility, including mark-unread rewinds", () => {
+    const completedAt = "2026-10-20T12:00:00Z";
+    const localVisit = "2026-10-20T13:00:00Z";
+    const thread = makeThreadFixture({ latestRun: makeLatestRun({ completedAt }) });
+    const keepUnread = () =>
+      hasUnseenCompletion({
+        ...thread,
+        lastVisitedAt: resolveThreadLastVisitedAt("2026-10-20T11:00:00Z", localVisit),
+      });
+    expect(ids(collapsedShelfThreads(shelf, null, keepUnread))).toEqual(["t1", "t2", "t3"]);
+    expect(
+      hasUnseenCompletion({
+        ...thread,
+        lastVisitedAt: resolveThreadLastVisitedAt(undefined, localVisit),
+      }),
+    ).toBe(false);
   });
 });

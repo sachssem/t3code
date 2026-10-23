@@ -760,6 +760,22 @@ function hasUnseenFailure(thread: ThreadStatusInput): boolean {
   return completedAt > lastVisitedAt;
 }
 
+const NO_THREADS: readonly never[] = [];
+
+// Keep the open row until navigation, even when reading it clears its unread mark.
+export function collapsedShelfThreads<T extends { environmentId: EnvironmentId; id: ThreadId }>(
+  threads: readonly T[],
+  routeThreadKey: string | null,
+  keepVisible?: (thread: T, key: string) => boolean,
+): readonly T[] {
+  if (routeThreadKey === null && keepVisible === undefined) return NO_THREADS;
+  const visible = threads.filter((thread) => {
+    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    return key === routeThreadKey || keepVisible?.(thread, key) === true;
+  });
+  return visible.length === 0 ? NO_THREADS : visible;
+}
+
 // Suppress trailing double-click navigation; keyboard and synthetic clicks use detail 0.
 export function isTrailingDoubleClick(detail: number): boolean {
   return detail > 1;
