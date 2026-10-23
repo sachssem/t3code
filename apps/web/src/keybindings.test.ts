@@ -203,6 +203,24 @@ const DEFAULT_BINDINGS = compile([
   },
 ]);
 
+describe("pull request viewed shortcut", () => {
+  it("toggles viewed on a bare v, but not while typing or in a terminal", () => {
+    const resolve = (context: { terminalFocus?: boolean; editableFocus?: boolean }) =>
+      resolveShortcutCommand(event({ key: "v" }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context,
+      });
+    assert.equal(resolve({}), "pullRequest.toggleViewed");
+    assert.isNull(resolve({ editableFocus: true }));
+    assert.isNull(resolve({ terminalFocus: true }));
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "v", metaKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+      }),
+    );
+  });
+});
+
 describe("effectiveShortcutsForCommand", () => {
   it("passes only effective preview shortcuts to the desktop bridge", () => {
     const reopen = modShortcut("t", { shiftKey: true });
