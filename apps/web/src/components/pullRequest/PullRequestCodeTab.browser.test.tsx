@@ -409,7 +409,7 @@ async function renderShortPages(stack: AsyncDisposableStack) {
       "IntersectionObserver",
       class extends IntersectionObserver {
         constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
-          super(options?.rootMargin === "240px" ? () => {} : callback, options);
+          super(options?.rootMargin === "0px 0px 100% 0px" ? () => {} : callback, options);
         }
       },
     ),
