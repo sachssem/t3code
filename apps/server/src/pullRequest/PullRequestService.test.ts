@@ -2104,6 +2104,40 @@ it.effect.each(["list", "listStats"] as const)(
     }),
 );
 
+it.effect("retries activity when its shared lookup interrupts independently of the reader", () =>
+  Effect.gen(function* () {
+    let activityCalls = 0;
+    const activity = {
+      comments: [],
+      commentCount: 0,
+      commentsTruncated: false,
+      reviewThreads: [],
+      commits: [],
+    };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequestActivity: () =>
+            Effect.suspend(() => {
+              activityCalls += 1;
+              // The cache's lookup fiber interrupts, while its reader is still waiting.
+              return activityCalls === 1 ? Effect.interrupt : Effect.succeed(activity);
+            }),
+        }),
+      ],
+    });
+
+    const result = yield* service.activity({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+    });
+    assert.deepStrictEqual(result, activity);
+    assert.strictEqual(activityCalls, 2);
+  }),
+);
+
 it.effect("shares one cold viewer lookup across distinct concurrent lists", () =>
   Effect.gen(function* () {
     let viewerCalls = 0;
