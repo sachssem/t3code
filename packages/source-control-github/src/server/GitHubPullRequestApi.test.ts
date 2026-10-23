@@ -3881,8 +3881,18 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     files: {
                       pageInfo: { hasNextPage, endCursor: `cursor-${index}` },
                       nodes: [
-                        { path: `src/file${index}.ts`, viewerViewedState: "VIEWED" },
-                        { path: `src/other${index}.ts`, viewerViewedState: "UNVIEWED" },
+                        {
+                          path: `src/file${index}.ts`,
+                          viewerViewedState: "VIEWED",
+                          additions: 10,
+                          deletions: 2,
+                        },
+                        {
+                          path: `src/other${index}.ts`,
+                          viewerViewedState: "UNVIEWED",
+                          additions: 3,
+                          deletions: 1,
+                        },
                       ],
                     },
                   },
@@ -3911,6 +3921,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         "cursor-1",
       ]);
       assert.isFalse(viewed.truncated);
+      expect(viewed.files[0]).toMatchObject({ additions: 10, deletions: 2 });
+      expect(viewed.files[1]).toMatchObject({ additions: 3, deletions: 1 });
       expect(viewed.files.map((file) => [file.path, file.state])).toEqual([
         ["src/file0.ts", "viewed"],
         ["src/other0.ts", "unviewed"],
@@ -3933,7 +3945,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
                   pullRequest: {
                     files: {
                       pageInfo: { hasNextPage: true, endCursor: "cursor" },
-                      nodes: [{ path: "src/file.ts", viewerViewedState: "VIEWED" }],
+                      nodes: [
+                        {
+                          path: "src/file.ts",
+                          viewerViewedState: "VIEWED",
+                          additions: 10,
+                          deletions: 2,
+                        },
+                      ],
                     },
                   },
                 },

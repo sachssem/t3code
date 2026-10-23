@@ -1384,7 +1384,11 @@ export const PullRequestFilesViewedRepositoryPullRequestFilesNodesPullRequestCha
   /** The path of the file. */
   path: Schema.String,
   /** The state of the file for the viewer. */
-  viewerViewedState: GraphQL.enumLiterals(Shared.FileViewedState.literals)
+  viewerViewedState: GraphQL.enumLiterals(Shared.FileViewedState.literals),
+  /** The number of additions to the file. */
+  additions: Shared.Int,
+  /** The number of deletions to the file. */
+  deletions: Shared.Int
 })
 export interface PullRequestFilesViewedRepositoryPullRequestFilesNodesPullRequestChangedFile extends Schema.Struct.Type<typeof PullRequestFilesViewedRepositoryPullRequestFilesNodesPullRequestChangedFile.fields> {}
 
@@ -1421,7 +1425,7 @@ export const PullRequestFilesViewed = GraphQL.query("PullRequestFilesViewed", {
       { name: "after", body: "String" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){files(first:100 after:$", "after", "){pageInfo{hasNextPage endCursor}nodes{path viewerViewedState}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){files(first:100 after:$", "after", "){pageInfo{hasNextPage endCursor}nodes{path viewerViewedState additions deletions}}}}"] }
     ],
     fragments: []
   },
