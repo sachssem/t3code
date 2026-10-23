@@ -3,7 +3,7 @@ import {
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
-import type { CodeViewAnnotationArgs, CodeViewDiffItem } from "@pierre/diffs/react";
+import type { CodeViewAnnotationArgs, CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
   PullRequestDetailView,
@@ -607,6 +607,7 @@ function PullRequestCodeTab({
   );
 
   const codeViewReveal = useCodeViewFileReveal();
+  const [viewer, setViewer] = useState<CodeViewHandle<ReviewAnnotationGroup, undefined> | null>(null);
   const answeredRevealNonce = useRef<number | null>(null);
 
   const loadDiffFiles = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
@@ -812,7 +813,10 @@ function PullRequestCodeTab({
       (entry) => {
         if (entry.isIntersecting) loadNextSlice();
       },
-      { rootMargin: "240px" },
+      {
+        root: viewer?.getInstance()?.getContainerElement() ?? null,
+        rootMargin: "0px 0px 100% 0px",
+      },
     );
   };
 
@@ -1459,6 +1463,7 @@ function PullRequestCodeTab({
   );
   // A file not loaded yet pages forward each time a slice arrives; once loaded, the viewer
   // positions it when it renders it.
+
   const answerReveal = useEffectEvent(() => {
     if (revealRequest === null || answeredRevealNonce.current === revealRequest.nonce) return;
     if (!items.some((item) => resolveFileDiffPath(item.fileDiff) === revealRequest.path)) {
@@ -1604,7 +1609,10 @@ function PullRequestCodeTab({
             <StyledDiffCodeView<ReviewAnnotationGroup>
               className="@container h-full overflow-auto [scrollbar-gutter:stable]"
               containerRef={scrollerRef}
-              viewerRef={codeViewReveal.attach}
+              viewerRef={(handle) => {
+                codeViewReveal.attach(handle);
+                setViewer(handle);
+              }}
               items={items}
               selectedLines={selectedLines}
               onSelectedLinesChange={setSelectedLines}
