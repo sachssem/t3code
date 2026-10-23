@@ -87,7 +87,12 @@ import { usePullRequestScrollMemory } from "./usePullRequestViewMemory";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
-import { areAllDiffFilesCollapsed, isGeneratedDiffFile } from "~/lib/diffCollapse";
+import {
+  areAllDiffFilesCollapsed,
+  isGeneratedDiffFile,
+  compileDiffCollapsePatterns,
+  matchesDiffCollapsePatterns,
+} from "~/lib/diffCollapse";
 import {
   pullRequestFindingKey,
   type PullRequestChatSubject,
@@ -162,7 +167,11 @@ import {
   toViewerSide,
 } from "./PullRequestReviewAnnotation";
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
-import { getFileViewedRange, isLineInFileDiff } from "./pullRequestDiff.logic";
+import {
+  getFileViewedRange,
+  isLineInFileDiff,
+  pullRequestFileFoldDefault,
+} from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
@@ -511,6 +520,9 @@ function PullRequestCodeTab({
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
     diffCollapseGeneratedFiles: settings.diffCollapseGeneratedFiles,
+    diffCollapsePathPatterns: settings.diffCollapsePathPatterns,
+    pullRequestCollapseReviewedFiles: settings.pullRequestCollapseReviewedFiles,
+    pullRequestMarkAutoCollapsedFilesViewed: settings.pullRequestMarkAutoCollapsedFilesViewed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
@@ -518,9 +530,17 @@ function PullRequestCodeTab({
   const [folds, setFolds] = useState(EMPTY_PULL_REQUEST_DIFF_FOLDS);
   const foldGroup = (path: string) => {
     const group = isTestChangedFile(path) ? folds.test : folds.source;
-    return group.override === null &&
-      (settings.diffFilesCollapsed ||
-        (settings.diffCollapseGeneratedFiles && isGeneratedDiffFile(path, generatedPaths)))
+    const fallback = pullRequestFileFoldDefault(
+      path,
+      group.override,
+      settings.diffFilesCollapsed ? "folded" : "expanded",
+      {
+        generatedFiles: settings.diffCollapseGeneratedFiles,
+        generatedPaths,
+        pathPatterns: collapsePathPatterns,
+      },
+    );
+    return group.override === null && fallback === "folded"
       ? { ...group, override: "folded" as const }
       : group;
   };
@@ -668,11 +688,35 @@ function PullRequestCodeTab({
   });
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
 
+  const {
+    parsedSlices,
+    loadedFiles: pagedFiles,
+    sourceFileStats,
+  } = diffModel(loadedSlices, `pull-request:${scopeKey}:${ignoreWhitespace}`, ignoreWhitespace);
+  const generatedPaths = new Set(loadedSlices.flatMap((slice) => slice.generatedPaths));
+  const collapsePathPatterns = compileDiffCollapsePatterns(
+    settings.diffCollapsePathPatterns,
+  ).matchers;
+  const autoCollapsedPaths = settings.pullRequestMarkAutoCollapsedFilesViewed
+    ? [
+        ...new Set([
+          ...pagedFiles.map(resolveFileDiffPath),
+          ...loadedSlices.flatMap((slice) =>
+            [...(slice.fileStats ?? []), ...slice.omittedFileStats].map((file) => file.path),
+          ),
+        ]),
+      ].filter(
+        (path) =>
+          (settings.diffCollapseGeneratedFiles && isGeneratedDiffFile(path, generatedPaths)) ||
+          matchesDiffCollapsePatterns(path, collapsePathPatterns),
+      )
+    : undefined;
   const viewedFilesStore = detail.capabilities.viewedFiles;
   const filesViewed = usePullRequestFilesViewed({
     environmentId,
     reference,
     enabled: viewedFilesStore !== undefined,
+    ...(autoCollapsedPaths === undefined ? {} : { markViewedPaths: autoCollapsedPaths }),
   });
   const {
     setViewed,
@@ -807,11 +851,6 @@ function PullRequestCodeTab({
   // Agent context is local, so it does not require host comment permission.
   const canSelectLines =
     commit === null && (review.inlineComment || onAddToAgentSelection !== undefined);
-  const {
-    parsedSlices,
-    loadedFiles: pagedFiles,
-    sourceFileStats,
-  } = diffModel(loadedSlices, `pull-request:${scopeKey}:${ignoreWhitespace}`, ignoreWhitespace);
   const withheldResults = useAtomValue(
     withheldFileDiffsAtom(
       JSON.stringify({ environmentId, input: withheldInput, paths: withheldPaths }),
@@ -1088,9 +1127,11 @@ function PullRequestCodeTab({
       </div>
     );
 
-  const generatedPaths = new Set(loadedSlices.flatMap((slice) => slice.generatedPaths));
   const foldsAsViewed = (path: string) =>
-    filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
+    settings.pullRequestCollapseReviewedFiles &&
+    filesViewedEnabled &&
+    isFileViewed(path) &&
+    !isFileViewedStale(path);
   const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
     ({ fileKey, foldKey, path, fileDiff, annotations, annotationsVersion }) => {
       const group = foldGroup(path);

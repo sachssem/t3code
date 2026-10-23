@@ -399,7 +399,11 @@ it("keeps a linked test file expanded when a refresh changes the rest of the dif
 async function renderShortPages(stack: AsyncDisposableStack) {
   setup({ paged: true });
   mocks.shortPages = true;
-  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    diffFilesCollapsed: false,
+    diffCollapsePathPatterns: [],
+  });
   stack.defer(() => {
     window.localStorage.removeItem("t3code.diffHideTestFiles");
     window.localStorage.removeItem("t3code.pullRequestFileTreeOpen");

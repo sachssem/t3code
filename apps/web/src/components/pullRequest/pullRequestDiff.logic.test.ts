@@ -1,8 +1,13 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getFileViewedRange, isLineInFileDiff } from "./pullRequestDiff.logic";
+import {
+  getFileViewedRange,
+  isLineInFileDiff,
+  pullRequestFileFoldDefault,
+} from "./pullRequestDiff.logic";
 
+/** Only the hunk ranges matter here; the viewer fills the rest in when it renders. */
 function fileWithHunks(
   hunks: ReadonlyArray<{
     deletionStart: number;
@@ -20,7 +25,13 @@ describe("isLineInFileDiff", () => {
     { deletionStart: 40, deletionCount: 0, additionStart: 42, additionCount: 2 },
   ]);
 
+  it("places a line inside a hunk, on the side that hunk counts", () => {
+    expect(isLineInFileDiff(file, "right", 12)).toBe(true);
+    expect(isLineInFileDiff(file, "left", 11)).toBe(true);
+  });
+
   it("includes the first line of a hunk and excludes the one past its last", () => {
+    // The boundaries are where an off-by-one would quietly move a conversation between lists.
     expect(isLineInFileDiff(file, "right", 10)).toBe(true);
     expect(isLineInFileDiff(file, "right", 14)).toBe(true);
     expect(isLineInFileDiff(file, "right", 15)).toBe(false);
@@ -30,8 +41,13 @@ describe("isLineInFileDiff", () => {
   });
 
   it("keeps the two sides apart, since one line number means two lines", () => {
+    // The second hunk is a pure insertion: it deletes nothing, so nothing is on its left.
     expect(isLineInFileDiff(file, "right", 43)).toBe(true);
     expect(isLineInFileDiff(file, "left", 40)).toBe(false);
+  });
+
+  it("places nothing in a file whose hunks the host withheld", () => {
+    expect(isLineInFileDiff(fileWithHunks([]), "right", 1)).toBe(false);
   });
 });
 
@@ -49,4 +65,54 @@ describe("getFileViewedRange", () => {
     expect(getFileViewedRange(files, "a.ts", "removed.ts")).toEqual([files[1]]);
     expect(getFileViewedRange(files, "removed.ts", "a.ts")).toEqual([]);
   });
+});
+
+describe("pullRequestFileFoldDefault", () => {
+  const generatedPaths = new Set(["src/paraglide/messages/en.js"]);
+  const rules = {
+    generatedFiles: true,
+    pathPatterns: [/\.test\.ts$/],
+    generatedPaths,
+  };
+
+  it("folds tests, and leaves the rest to the saved default", () => {
+    expect(pullRequestFileFoldDefault("src/a.test.ts", null, "expanded", rules)).toBe("folded");
+    expect(pullRequestFileFoldDefault("src/other.ts", null, "expanded", rules)).toBe("expanded");
+    expect(pullRequestFileFoldDefault("src/other.ts", null, "folded", rules)).toBe("folded");
+  });
+
+  it("leaves tests to the saved default once no pattern matches them", () => {
+    const noTests = { generatedFiles: true, pathPatterns: [], generatedPaths };
+    expect(pullRequestFileFoldDefault("src/a.test.ts", null, "expanded", noTests)).toBe("expanded");
+  });
+
+  it("lets the toolbar speak for every file", () => {
+    expect(pullRequestFileFoldDefault("src/a.test.ts", "expanded", "folded", rules)).toBe(
+      "expanded",
+    );
+    expect(pullRequestFileFoldDefault("src/other.ts", "folded", "expanded", rules)).toBe("folded");
+  });
+
+  it("folds generated files until the toolbar speaks, and leaves them open once that rule is off", () => {
+    const path = "src/paraglide/messages/en.js";
+    expect(pullRequestFileFoldDefault(path, null, "expanded", rules)).toBe("folded");
+    expect(pullRequestFileFoldDefault(path, "expanded", "folded", rules)).toBe("expanded");
+    const noGenerated = { ...rules, generatedPaths: new Set<string>() };
+    expect(pullRequestFileFoldDefault(path, null, "expanded", noGenerated)).toBe("expanded");
+  });
+});
+
+it("applies the generated preference to upstream lockfile classification too", () => {
+  const rules = {
+    generatedFiles: true,
+    generatedPaths: new Set<string>(),
+    pathPatterns: [],
+  };
+  expect(pullRequestFileFoldDefault("pnpm-lock.yaml", null, "expanded", rules)).toBe("folded");
+  expect(
+    pullRequestFileFoldDefault("pnpm-lock.yaml", null, "expanded", {
+      ...rules,
+      generatedFiles: false,
+    }),
+  ).toBe("expanded");
 });

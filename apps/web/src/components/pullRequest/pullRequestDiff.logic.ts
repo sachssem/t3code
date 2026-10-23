@@ -1,5 +1,8 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
+import type { DiffFoldOverride } from "@t3tools/client-runtime/pull-request-diff-fold";
 import type { PullRequestDiffSide } from "@t3tools/contracts";
+
+import { isGeneratedDiffFile, matchesDiffCollapsePatterns } from "~/lib/diffCollapse";
 
 /** Only rendered hunks can anchor comments; list others off-diff. */
 export function isLineInFileDiff(
@@ -12,6 +15,23 @@ export function isLineInFileDiff(
       ? line >= hunk.deletionStart && line < hunk.deletionStart + hunk.deletionCount
       : line >= hunk.additionStart && line < hunk.additionStart + hunk.additionCount,
   );
+}
+
+// The toolbar also applies to files that have not arrived in a page yet.
+export function pullRequestFileFoldDefault(
+  path: string,
+  foldOverride: DiffFoldOverride,
+  savedDefault: "expanded" | "folded",
+  rules: {
+    readonly generatedFiles: boolean;
+    readonly pathPatterns: ReadonlyArray<RegExp>;
+    readonly generatedPaths: ReadonlySet<string>;
+  },
+): "expanded" | "folded" {
+  if (foldOverride !== null) return foldOverride;
+  if (matchesDiffCollapsePatterns(path, rules.pathPatterns)) return "folded";
+  if (rules.generatedFiles && isGeneratedDiffFile(path, rules.generatedPaths)) return "folded";
+  return savedDefault;
 }
 
 export function getFileViewedRange<T extends { readonly fileKey: string }>(

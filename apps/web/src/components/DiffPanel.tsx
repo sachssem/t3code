@@ -63,6 +63,7 @@ import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 import {
   areAllDiffFilesCollapsed,
   initialCollapsedDiffFileKeys,
+  compileDiffCollapsePatterns,
   toggleAllDiffFiles,
 } from "../lib/diffCollapse";
 import { LIVE_REFRESH_MIN_INTERVAL_MS, useLiveRefresh } from "../hooks/useLiveRefresh";
@@ -229,6 +230,7 @@ export default function DiffPanel({
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
     diffCollapseGeneratedFiles: settings.diffCollapseGeneratedFiles,
+    diffCollapsePathPatterns: settings.diffCollapsePathPatterns,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
     diffLayout: settings.diffLayout,
     timestampFormat: settings.timestampFormat,
@@ -678,6 +680,9 @@ export default function DiffPanel({
   };
   const shownFileEntries = renderableFileEntries.filter(({ fileDiff }) => isFileShown(fileDiff));
   const shownFileKeys = shownFileEntries.map((file) => file.fileKey);
+  const collapsePathPatterns = compileDiffCollapsePatterns(
+    settings.diffCollapsePathPatterns,
+  ).matchers;
   const defaultCollapsedDiffFileKeys = initialCollapsedDiffFileKeys(
     renderableFileEntries.map(({ fileKey, fileDiff }) => ({
       fileKey,
@@ -686,6 +691,7 @@ export default function DiffPanel({
     {
       allCollapsed: settings.diffFilesCollapsed,
       generatedFiles: settings.diffCollapseGeneratedFiles,
+      pathPatterns: collapsePathPatterns,
       generatedPaths: new Set(
         (selectedTurn ? activeCheckpointDiff.data : selectedGitSource)?.generatedPaths ?? [],
       ),

@@ -768,6 +768,38 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("collapsed expanded collapse expand files pull request pr code tab")],
   },
   {
+    id: "diff-collapse-path-patterns",
+    title: msg("Auto-collapse files matching"),
+    to: "/settings/diffs",
+    searchTerms: [
+      msg("fold test tests specs pattern patterns regex regexp path glob pr code tab diff review"),
+    ],
+  },
+  {
+    id: "pull-request-collapse-reviewed-files",
+    title: msg("Collapse reviewed files in pull requests"),
+    to: "/settings/diffs",
+    searchTerms: [msg("fold viewed seen ticked pr code tab diff review")],
+  },
+  {
+    id: "diff-collapse-generated-files",
+    title: msg("Collapse generated files"),
+    to: "/settings/diffs",
+    searchTerms: [
+      msg("fold linguist-generated gitattributes lockfiles codegen build output diff pr"),
+    ],
+  },
+  {
+    id: "pull-request-mark-auto-collapsed-files-viewed",
+    title: msg("Mark auto-collapsed files as viewed in pull requests"),
+    to: "/settings/diffs",
+    searchTerms: [
+      msg(
+        "auto viewed seen ticked generated linguist-generated gitattributes test pattern pr review",
+      ),
+    ],
+  },
+  {
     id: "diff-layout",
     title: msg("Diff layout"),
     to: "/settings/diffs",

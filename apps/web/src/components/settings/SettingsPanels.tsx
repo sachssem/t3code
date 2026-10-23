@@ -1,6 +1,8 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
+import { compileDiffCollapsePatterns } from "~/lib/diffCollapse";
+import { Textarea } from "../ui/textarea";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
@@ -557,6 +559,30 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? [gt("Composer context")]
       : []),
     ...getChangedTypographySettingLabels(settings, messages),
+    ...(!Equal.equals(
+      settings.diffCollapsePathPatterns,
+      DEFAULT_UNIFIED_SETTINGS.diffCollapsePathPatterns,
+    )
+      ? [gt("Auto-collapse files matching")]
+      : []),
+    ...(!Equal.equals(
+      settings.pullRequestCollapseReviewedFiles,
+      DEFAULT_UNIFIED_SETTINGS.pullRequestCollapseReviewedFiles,
+    )
+      ? [gt("Collapse reviewed files in pull requests")]
+      : []),
+    ...(!Equal.equals(
+      settings.diffCollapseGeneratedFiles,
+      DEFAULT_UNIFIED_SETTINGS.diffCollapseGeneratedFiles,
+    )
+      ? [gt("Collapse generated files")]
+      : []),
+    ...(!Equal.equals(
+      settings.pullRequestMarkAutoCollapsedFilesViewed,
+      DEFAULT_UNIFIED_SETTINGS.pullRequestMarkAutoCollapsedFilesViewed,
+    )
+      ? [gt("Mark auto-collapsed files as viewed in pull requests")]
+      : []),
     ...(settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed
       ? [gt("Default diff file state")]
       : []),
@@ -702,6 +728,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
+      diffCollapsePathPatterns: DEFAULT_UNIFIED_SETTINGS.diffCollapsePathPatterns,
+      pullRequestCollapseReviewedFiles: DEFAULT_UNIFIED_SETTINGS.pullRequestCollapseReviewedFiles,
+      diffCollapseGeneratedFiles: DEFAULT_UNIFIED_SETTINGS.diffCollapseGeneratedFiles,
+      pullRequestMarkAutoCollapsedFilesViewed:
+        DEFAULT_UNIFIED_SETTINGS.pullRequestMarkAutoCollapsedFilesViewed,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
@@ -820,6 +851,60 @@ function AutoSettleDaysInput({
       }}
       aria-label={gt("Days of inactivity before auto-settle")}
     />
+  );
+}
+
+function DiffCollapsePatternsRow() {
+  const gt = useGT();
+  const setting = useSearchableSetting();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const patterns = settings.diffCollapsePathPatterns;
+  const { invalid } = compileDiffCollapsePatterns(patterns);
+  const text = patterns.join("\n");
+  return (
+    <SettingsRow
+      {...setting("diff-collapse-path-patterns")}
+      description={gt(
+        "Start files whose repo-relative path matches one of these regular expressions folded, in pull requests and in local diffs. One per line; leave empty to turn this off.",
+      )}
+      resetAction={
+        !Equal.equals(patterns, DEFAULT_UNIFIED_SETTINGS.diffCollapsePathPatterns) ? (
+          <SettingResetButton
+            ariaLabel={gt("Reset auto-collapse patterns to default")}
+            onClick={() =>
+              updateSettings({
+                diffCollapsePathPatterns: DEFAULT_UNIFIED_SETTINGS.diffCollapsePathPatterns,
+              })
+            }
+          />
+        ) : null
+      }
+    >
+      <div className="mt-3 max-w-2xl space-y-1.5 pb-3.5">
+        <Textarea
+          key={text}
+          defaultValue={text}
+          onBlur={(event) => {
+            const next = event.target.value
+              .split("\n")
+              .map((line) => line.trim())
+              .filter((line) => line.length > 0);
+            if (!Equal.equals(next, patterns)) updateSettings({ diffCollapsePathPatterns: next });
+          }}
+          rows={Math.min(Math.max(patterns.length, 3), 8)}
+          spellCheck={false}
+          aria-label={gt("Auto-collapse files matching")}
+        />
+        {invalid.length > 0 ? (
+          <p className="text-xs text-destructive">
+            {gt("Ignored, not a valid regular expression: {patterns}", {
+              patterns: invalid.join(", "),
+            })}
+          </p>
+        ) : null}
+      </div>
+    </SettingsRow>
   );
 }
 
@@ -1735,6 +1820,93 @@ export function DiffsSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+        <DiffCollapsePatternsRow />
+        <SettingsRow
+          {...setting("pull-request-collapse-reviewed-files")}
+          description={gt(
+            "Start files you already marked as viewed folded in a pull request's Code tab. Files changed since you viewed them stay open.",
+          )}
+          resetAction={
+            settings.pullRequestCollapseReviewedFiles !==
+            DEFAULT_UNIFIED_SETTINGS.pullRequestCollapseReviewedFiles ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset reviewed files in pull requests to default")}
+                onClick={() =>
+                  updateSettings({
+                    pullRequestCollapseReviewedFiles:
+                      DEFAULT_UNIFIED_SETTINGS.pullRequestCollapseReviewedFiles,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.pullRequestCollapseReviewedFiles}
+              onCheckedChange={(checked) =>
+                updateSettings({ pullRequestCollapseReviewedFiles: Boolean(checked) })
+              }
+              aria-label={gt("Collapse reviewed files in pull requests")}
+            />
+          }
+        />
+        <SettingsRow
+          {...setting("diff-collapse-generated-files")}
+          description={gt(
+            "Start generated files folded in pull requests and local diffs. Includes lockfiles, common generated paths, and files marked linguist-generated in .gitattributes.",
+          )}
+          resetAction={
+            settings.diffCollapseGeneratedFiles !==
+            DEFAULT_UNIFIED_SETTINGS.diffCollapseGeneratedFiles ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset generated files to default")}
+                onClick={() =>
+                  updateSettings({
+                    diffCollapseGeneratedFiles: DEFAULT_UNIFIED_SETTINGS.diffCollapseGeneratedFiles,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.diffCollapseGeneratedFiles}
+              onCheckedChange={(checked) =>
+                updateSettings({ diffCollapseGeneratedFiles: Boolean(checked) })
+              }
+              aria-label={gt("Collapse generated files")}
+            />
+          }
+        />
+        <SettingsRow
+          {...setting("pull-request-mark-auto-collapsed-files-viewed")}
+          description={gt(
+            "Mark files that start collapsed because they are generated or match a pattern as viewed when you open a pull request, so they stay out of what is left to review. Unticking one keeps it unticked.",
+          )}
+          resetAction={
+            settings.pullRequestMarkAutoCollapsedFilesViewed !==
+            DEFAULT_UNIFIED_SETTINGS.pullRequestMarkAutoCollapsedFilesViewed ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset viewed auto-collapsed files in pull requests to default")}
+                onClick={() =>
+                  updateSettings({
+                    pullRequestMarkAutoCollapsedFilesViewed:
+                      DEFAULT_UNIFIED_SETTINGS.pullRequestMarkAutoCollapsedFilesViewed,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.pullRequestMarkAutoCollapsedFilesViewed}
+              onCheckedChange={(checked) =>
+                updateSettings({ pullRequestMarkAutoCollapsedFilesViewed: Boolean(checked) })
+              }
+              aria-label={gt("Mark auto-collapsed files as viewed in pull requests")}
+            />
           }
         />
         <DiffColorsSettingsRow />

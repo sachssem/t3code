@@ -1,4 +1,8 @@
-import type { PullRequestFileViewedState, PullRequestFilesViewedResult } from "@t3tools/contracts";
+import {
+  MAX_FILES_VIEWED_PRESSES,
+  type PullRequestFileViewedState,
+  type PullRequestFilesViewedResult,
+} from "@t3tools/contracts";
 
 export type FileViewedStates = ReadonlyMap<string, PullRequestFileViewedState>;
 
@@ -63,12 +67,14 @@ export interface FileViewedPress {
   readonly revision: string | undefined;
 }
 
-export function toFileViewedBatch(
-  presses: ReadonlyMap<string, FileViewedPress>,
+function toFileViewedBatch(
+  presses: ReadonlyMap<string, FileViewedPress | boolean>,
 ): ReadonlyArray<{ readonly path: string; readonly viewed: boolean; readonly revision?: string }> {
-  return [...presses].map(([path, { viewed, revision }]) =>
-    revision === undefined ? { path, viewed } : { path, viewed, revision },
-  );
+  return [...presses].map(([path, press]) => {
+    if (typeof press === "boolean") return { path, viewed: press };
+    const { viewed, revision } = press;
+    return revision === undefined ? { path, viewed } : { path, viewed, revision };
+  });
 }
 
 // Partial counts would report progress the reader has not made.
@@ -86,4 +92,61 @@ export function countUnreviewedLines(
     deletions += file.deletions;
   }
   return { additions, deletions };
+}
+
+/**
+ * Client memory survives reloads. Explicit unmarks stay unmarked; a push dismissing a
+ * viewed file permits one new mark until the host acknowledges it as viewed again.
+ */
+export interface AutoCollapsedFilesViewedMemory {
+  readonly touched: Set<string>;
+  readonly remarked: Set<string>;
+}
+
+/**
+ * The auto-collapsed files to mark viewed now, recording them in `memory`. Nothing before the host has
+ * answered, nothing the reader is pressing, and never a file the reader unticked after it was
+ * marked. A write that fails leaves the memory as it is, so it is not retried into a loop.
+ */
+export function takeAutoCollapsedFilesToMarkViewed(
+  paths: Iterable<string>,
+  states: FileViewedStates | null,
+  overlay: FileViewedOverlay,
+  memory: AutoCollapsedFilesViewedMemory,
+  truncated = false,
+): ReadonlyArray<string> {
+  if (states === null) return [];
+  const marks: string[] = [];
+  for (const path of paths) {
+    if (overlay.has(path) || (!truncated && !states.has(path))) continue;
+    const state = states.get(path);
+    if (isViewedState(state)) {
+      memory.touched.add(path);
+      memory.remarked.delete(path);
+      continue;
+    }
+    if (isStaleViewedState(state) ? memory.remarked.has(path) : memory.touched.has(path)) continue;
+    memory.touched.add(path);
+    if (isStaleViewedState(state)) memory.remarked.add(path);
+    marks.push(path);
+  }
+  return marks;
+}
+
+export function toFileViewedBatches(
+  overlay: ReadonlyMap<string, FileViewedPress | boolean>,
+  automatic: FileViewedOverlay = new Map(),
+) {
+  // Unknown paths from a truncated host list can reject an entire request. Keep those
+  // automatic marks separate so their failure cannot roll back the reader's presses.
+  return [overlay, new Map([...automatic].filter(([path]) => !overlay.has(path)))].flatMap(
+    (presses) => {
+      const batch = toFileViewedBatch(presses);
+      return Array.from(
+        { length: Math.ceil(batch.length / MAX_FILES_VIEWED_PRESSES) },
+        (_, index) =>
+          batch.slice(index * MAX_FILES_VIEWED_PRESSES, (index + 1) * MAX_FILES_VIEWED_PRESSES),
+      );
+    },
+  );
 }

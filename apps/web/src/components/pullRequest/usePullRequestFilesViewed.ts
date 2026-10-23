@@ -1,6 +1,6 @@
 import { useMessages } from "gt-react";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -30,12 +30,14 @@ const DISABLED_SCOPE = {
   subscribe: () => () => {},
   getSnapshot: () => NO_OVERLAY,
   setViewed: () => {},
+  markViewed: (_paths: ReadonlyArray<string>) => {},
 };
 
 export function usePullRequestFilesViewed(options: {
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
   readonly enabled: boolean;
+  readonly markViewedPaths?: ReadonlyArray<string>;
 }): PullRequestFilesViewedView {
   const { environmentId, reference, enabled } = options;
   const query = useEnvironmentQuery(
@@ -46,6 +48,11 @@ export function usePullRequestFilesViewed(options: {
   // Stable per scope: `setViewed` is handed to every file header the viewer draws.
   const scope = enabled ? filesViewedScope({ environmentId, reference }) : DISABLED_SCOPE;
   const overlay = useSyncExternalStore(scope.subscribe, scope.getSnapshot);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- synchronizes automatic viewed paths with the external store, which waits for a host answer
+  useEffect(() => {
+    scope.markViewed(options.markViewedPaths ?? []);
+  }, [scope, options.markViewedPaths]);
 
   return {
     enabled,
