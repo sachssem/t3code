@@ -842,6 +842,12 @@ export const NodesCommit = Schema.Struct({
   oid: Shared.GitObjectID,
   /** The number of additions in this commit. */
   additions: Shared.Int,
+  /**
+   * The number of changed files in this commit. If GitHub is unable to calculate
+   * the number of changed files (for example due to a timeout), this will return
+   * `null`. We recommend using this field instead of `changedFiles`.
+   */
+  changedFilesIfAvailable: Schema.NullOr(Shared.Int),
   /** The number of deletions in this commit. */
   deletions: Shared.Int
 })
@@ -860,7 +866,7 @@ export const PullRequestCommitStats = GraphQL.query("PullRequestCommitStats", {
       { name: "ids", body: "[ID!]!" }
     ],
     selections: [
-      { name: "nodes", body: ["(ids:$", "ids", "){__typename...on Commit{oid additions deletions}}"] }
+      { name: "nodes", body: ["(ids:$", "ids", "){__typename...on Commit{oid additions changedFilesIfAvailable deletions}}"] }
     ],
     fragments: []
   },

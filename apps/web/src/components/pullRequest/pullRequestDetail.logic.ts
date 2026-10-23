@@ -4,6 +4,8 @@ import {
   type ChangeRequestTerminology,
 } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
+import { classifyChangedFile } from "@t3tools/shared/changedFileKind";
+
 import {
   GitCommandError,
   PullRequestDetail,
@@ -15,6 +17,8 @@ import {
   type PullRequestChecksState as ContractPullRequestChecksState,
   type PullRequestComment,
   type PullRequestCommit,
+  type PullRequestChangeBreakdown,
+  type PullRequestDiffResult,
   type PullRequestContextMetadata,
   type PullRequestDetailView,
   type PullRequestMergeability,
@@ -46,6 +50,64 @@ export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, st
   squash: "Squash and merge",
   rebase: "Rebase and merge",
 };
+
+export function pullRequestHeaderChangeStat(
+  detail: {
+    readonly changedFiles: number;
+    readonly additions: number;
+    readonly deletions: number;
+    readonly commits: ReadonlyArray<PullRequestCommit>;
+  },
+  commitOid: string | null,
+  pages: ReadonlyArray<Pick<PullRequestDiffResult, "fileStats" | "nextCursor">> = [],
+) {
+  const commit = detail.commits.find((entry) => entry.oid === commitOid);
+  if (
+    commit === undefined ||
+    commit.additions === undefined ||
+    commit.deletions === undefined ||
+    commit.changedFiles === undefined
+  ) {
+    return {
+      commitOid: null,
+      files: detail.changedFiles,
+      lines: { additions: detail.additions, deletions: detail.deletions },
+      breakdown: undefined,
+    };
+  }
+  let breakdown: PullRequestChangeBreakdown = null;
+  const files = pages.flatMap((page) => page.fileStats ?? []);
+  // A host can cap its file list or omit counts. Never label a partial split as the whole commit.
+  if (
+    pages.at(-1)?.nextCursor === null &&
+    pages.every((page) => page.fileStats !== undefined) &&
+    files.length === commit.changedFiles &&
+    new Set(files.map((file) => file.path)).size === files.length &&
+    files.reduce((sum, file) => sum + file.additions, 0) === commit.additions &&
+    files.reduce((sum, file) => sum + file.deletions, 0) === commit.deletions
+  ) {
+    const empty = () => ({ additions: 0, deletions: 0 });
+    const counted = {
+      code: empty(),
+      tests: empty(),
+      docs: empty(),
+      mocks: empty(),
+      generated: empty(),
+    };
+    for (const file of files) {
+      const bucket = counted[classifyChangedFile(file.path)];
+      bucket.additions += file.additions;
+      bucket.deletions += file.deletions;
+    }
+    breakdown = counted;
+  }
+  return {
+    commitOid: commit.oid,
+    files: commit.changedFiles,
+    lines: { additions: commit.additions, deletions: commit.deletions },
+    breakdown,
+  };
+}
 
 export function allowsSinglePullRequestMerge(input: {
   supportsStackActions: boolean;
