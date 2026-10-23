@@ -1,4 +1,8 @@
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
+import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+
+import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
+import { getHoveredPullRequestDiff } from "../pullRequest/pullRequestViewedShortcut";
 
 export const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -69,12 +73,22 @@ export function shouldRedirectInputToComposer(event: Event): boolean {
   return true;
 }
 
-export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
+export function shouldTypeToFocusComposer(
+  event: KeyboardEvent,
+  keybindings: ResolvedKeybindingsConfig,
+  context: Partial<ShortcutMatchContext> = {},
+): boolean {
   if (event.isComposing) return false;
   if (event.metaKey || event.ctrlKey || event.altKey) return false;
   if (event.key.length !== 1) return false;
   if (!shouldRedirectInputToComposer(event)) return false;
   if (isSurfaceLauncherKey(event)) return false;
+  // Like launcher keys, the viewed shortcut may have a later window capture listener.
+  if (
+    resolveShortcutCommand(event, keybindings, { context }) === "pullRequest.toggleViewed" &&
+    getHoveredPullRequestDiff() !== null
+  )
+    return false;
 
   return true;
 }
