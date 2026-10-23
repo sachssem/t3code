@@ -68,7 +68,12 @@ import { usePullRequestScrollMemory } from "./usePullRequestViewMemory";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
-import { areAllDiffFilesCollapsed, isGeneratedDiffFile } from "~/lib/diffCollapse";
+import {
+  areAllDiffFilesCollapsed,
+  isGeneratedDiffFile,
+  compileDiffCollapsePatterns,
+  matchesDiffCollapsePatterns,
+} from "~/lib/diffCollapse";
 import {
   pullRequestFindingKey,
   type PullRequestChatSubject,
@@ -142,6 +147,7 @@ import {
   isFileDiffCollapsed,
   isLineInFileDiff,
   withFileDiffFold,
+  pullRequestFileFoldDefault,
   type DiffFoldOverride,
   type FileDiffFoldChoices,
 } from "./pullRequestDiff.logic";
@@ -435,6 +441,9 @@ function PullRequestCodeTab({
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
     diffCollapseGeneratedFiles: settings.diffCollapseGeneratedFiles,
+    diffCollapsePathPatterns: settings.diffCollapsePathPatterns,
+    pullRequestCollapseReviewedFiles: settings.pullRequestCollapseReviewedFiles,
+    pullRequestMarkAutoCollapsedFilesViewed: settings.pullRequestMarkAutoCollapsedFilesViewed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
@@ -443,8 +452,7 @@ function PullRequestCodeTab({
   const [lastViewedFileKey, setLastViewedFileKey] = useState<string | null>(null);
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
-  const effectiveFoldOverride =
-    foldOverride ?? (settings.diffFilesCollapsed ? "folded" : "expanded");
+  const savedFoldDefault = settings.diffFilesCollapsed ? "folded" : "expanded";
   const diffLayout = settings.diffLayout;
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
@@ -581,11 +589,61 @@ function PullRequestCodeTab({
   });
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
 
+  const { parsedSlices, loadedFiles, sourceFileStats } = diffModel(
+    loadedSlices,
+    `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`,
+    ignoreWhitespace,
+  );
+  const linkAnchor = parsePullRequestAnchor(revealUrl);
+  const linkFile =
+    linkAnchor?.kind === "diff"
+      ? loadedFiles.find((file) =>
+          pullRequestDiffPathMatches(linkAnchor.digest, resolveFileDiffPath(file)),
+        )
+      : undefined;
+  const pendingLinkPath = linkFile ? resolveFileDiffPath(linkFile) : null;
+  // The linked file stays shown past the test-file filter after the link settles.
+  const [revealedLink, setRevealedLink] = useState<{
+    readonly scope: string;
+    readonly path: string;
+  } | null>(null);
+  const linkPath = pendingLinkPath ?? (revealedLink?.scope === scopeKey ? revealedLink.path : null);
+  const testFileCount = loadedFiles.filter((file) =>
+    isTestChangedFile(resolveFileDiffPath(file)),
+  ).length;
+  // A requested file stays visible so a jump to a hidden test still lands.
+  const files = hideTestFiles
+    ? loadedFiles.filter((file) => {
+        const path = resolveFileDiffPath(file);
+        return path === revealRequest?.path || path === linkPath || !isTestChangedFile(path);
+      })
+    : loadedFiles;
+  const hiddenTestFileCount = loadedFiles.length - files.length;
+  const filePaths = files.map((file) => resolveFileDiffPath(file));
+  const generatedPaths = new Set(loadedSlices.flatMap((slice) => slice.generatedPaths));
+  const collapsePathPatterns = compileDiffCollapsePatterns(
+    settings.diffCollapsePathPatterns,
+  ).matchers;
+  const autoCollapsedPaths = settings.pullRequestMarkAutoCollapsedFilesViewed
+    ? [
+        ...new Set([
+          ...loadedFiles.map(resolveFileDiffPath),
+          ...loadedSlices.flatMap((slice) =>
+            [...(slice.fileStats ?? []), ...slice.omittedFileStats].map((file) => file.path),
+          ),
+        ]),
+      ].filter(
+        (path) =>
+          (settings.diffCollapseGeneratedFiles && isGeneratedDiffFile(path, generatedPaths)) ||
+          matchesDiffCollapsePatterns(path, collapsePathPatterns),
+      )
+    : undefined;
   const viewedFilesStore = detail.capabilities.viewedFiles;
   const filesViewed = usePullRequestFilesViewed({
     environmentId,
     reference,
     enabled: viewedFilesStore !== undefined,
+    ...(autoCollapsedPaths === undefined ? {} : { markViewedPaths: autoCollapsedPaths }),
   });
   const {
     setViewed,
@@ -594,6 +652,12 @@ function PullRequestCodeTab({
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
+  const foldOverrideFor = (path: string) =>
+    pullRequestFileFoldDefault(path, foldOverride, savedFoldDefault, {
+      pathPatterns: collapsePathPatterns,
+      generatedPaths,
+      generatedFiles: settings.diffCollapseGeneratedFiles,
+    });
   const appliedRefreshToken = useRef(refreshToken);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new refresh token clears loaded slices and refetches the first diff page and viewed files
   useEffect(() => {
@@ -704,37 +768,6 @@ function PullRequestCodeTab({
   // Agent context is local, so it does not require host comment permission.
   const canSelectLines =
     commit === null && (review.inlineComment || onAddToAgentSelection !== undefined);
-  const { parsedSlices, loadedFiles, sourceFileStats } = diffModel(
-    loadedSlices,
-    `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`,
-    ignoreWhitespace,
-  );
-  const linkAnchor = parsePullRequestAnchor(revealUrl);
-  const linkFile =
-    linkAnchor?.kind === "diff"
-      ? loadedFiles.find((file) =>
-          pullRequestDiffPathMatches(linkAnchor.digest, resolveFileDiffPath(file)),
-        )
-      : undefined;
-  const pendingLinkPath = linkFile ? resolveFileDiffPath(linkFile) : null;
-  // The linked file stays shown past the test-file filter after the link settles.
-  const [revealedLink, setRevealedLink] = useState<{
-    readonly scope: string;
-    readonly path: string;
-  } | null>(null);
-  const linkPath = pendingLinkPath ?? (revealedLink?.scope === scopeKey ? revealedLink.path : null);
-  const testFileCount = loadedFiles.filter((file) =>
-    isTestChangedFile(resolveFileDiffPath(file)),
-  ).length;
-  // A requested file stays visible so a jump to a hidden test still lands.
-  const files = hideTestFiles
-    ? loadedFiles.filter((file) => {
-        const path = resolveFileDiffPath(file);
-        return path === revealRequest?.path || path === linkPath || !isTestChangedFile(path);
-      })
-    : loadedFiles;
-  const hiddenTestFileCount = loadedFiles.length - files.length;
-  const filePaths = files.map((file) => resolveFileDiffPath(file));
   const omittedFileStats = new Map(
     loadedSlices.flatMap((slice) =>
       slice.omittedFileStats.map((file) => [file.path, file] as const),
@@ -864,15 +897,13 @@ function PullRequestCodeTab({
       </div>
     );
 
-  const generatedPaths = new Set(loadedSlices.flatMap((slice) => slice.generatedPaths));
-  const foldOverrideFor = (path: string): "expanded" | "folded" =>
-    foldOverride ??
-    (settings.diffCollapseGeneratedFiles && isGeneratedDiffFile(path, generatedPaths)
-      ? "folded"
-      : effectiveFoldOverride);
   // A stale mark means the file changed since it was viewed; Fold all and Expand all outrank marks.
   const foldsAsViewed = (path: string) =>
-    foldOverride === null && filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
+    foldOverride === null &&
+    settings.pullRequestCollapseReviewedFiles &&
+    filesViewedEnabled &&
+    isFileViewed(path) &&
+    !isFileViewedStale(path);
   const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
     ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
       const collapsed = isFileDiffCollapsed(
@@ -928,7 +959,8 @@ function PullRequestCodeTab({
   const toggleFile = (fileKey: string) => {
     const path = annotatedFiles.find((file) => file.fileKey === fileKey)?.path;
     const viewed = path !== undefined && foldsAsViewed(path);
-    const override = path === undefined ? effectiveFoldOverride : foldOverrideFor(path);
+    const override =
+      path === undefined ? (foldOverride ?? savedFoldDefault) : foldOverrideFor(path);
     setFoldChoices((current) =>
       withFileDiffFold(current, fileKey, !isFileDiffCollapsed(fileKey, override, current, viewed)),
     );

@@ -1,4 +1,8 @@
-import { ClientSettingsSchema, type ClientSettings } from "@t3tools/contracts";
+import {
+  ClientSettingsSchema,
+  migrateLegacyClientSettings,
+  type ClientSettings,
+} from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as Context from "effect/Context";
@@ -22,7 +26,7 @@ const decodeClientSettingsJson = Effect.fnUntraced(function* (raw: string) {
   const document = yield* decodeClientSettingsDocument(raw);
   // Select the shape before validation so invalid legacy settings cannot become defaults.
   return yield* decodeClientSettingsValue(
-    Object.hasOwn(document, "settings") ? document.settings : document,
+    migrateLegacyClientSettings(Object.hasOwn(document, "settings") ? document.settings : document),
   );
 });
 const encodeClientSettingsJson = Schema.encodeEffect(ClientSettingsJson);

@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  MAX_FILES_VIEWED_PRESSES,
   ProjectId,
   type PullRequestFilesViewedResult,
   type PullRequestRef,
@@ -9,6 +10,7 @@ import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  autoViewedMemoryScopeKey,
   createFilesViewedStore,
   type FilesViewedStoreDeps,
   type FilesViewedTarget,
@@ -210,4 +212,69 @@ describe("createFilesViewedStore", () => {
     expect(scope.getSnapshot().size).toBe(0);
     release();
   });
+});
+
+it("batches automatic marks separately and preserves a manual unmark after their failure", async () => {
+  using t = setup({
+    files: [
+      { path: "generated.ts", state: "unviewed" },
+      { path: "mine.ts", state: "viewed" },
+    ],
+    truncated: false,
+  });
+  const scope = t.store.scope(first);
+  const release = scope.subscribe(() => {});
+  scope.markViewed(["generated.ts", "mine.ts"]);
+  scope.setViewed("mine.ts", false);
+  await vi.advanceTimersByTimeAsync(400);
+  expect(t.send.mock.calls.map((call) => call[1])).toEqual([
+    [{ path: "mine.ts", viewed: false }],
+    [{ path: "generated.ts", viewed: true }],
+  ]);
+  t.settles[0]?.(AsyncResult.success(undefined));
+  t.settles[1]?.(AsyncResult.fail("automatic mark failed"));
+  await vi.advanceTimersByTimeAsync(0);
+  expect([...scope.getSnapshot()]).toEqual([["mine.ts", false]]);
+  scope.markViewed(["generated.ts", "mine.ts"]);
+  await vi.advanceTimersByTimeAsync(400);
+  expect(t.send).toHaveBeenCalledTimes(2);
+  release();
+});
+
+it("sends every automatic mark within the contract limit", async () => {
+  const files = Array.from({ length: MAX_FILES_VIEWED_PRESSES + 1 }, (_, index) => ({
+    path: `${index}.ts`,
+    state: "unviewed" as const,
+  }));
+  using t = setup({ files, truncated: false });
+  const scope = t.store.scope(first);
+  const release = scope.subscribe(() => {});
+  scope.markViewed(files.map((file) => file.path));
+  await vi.advanceTimersByTimeAsync(400);
+  expect(t.send.mock.calls.map((call) => call[1].length)).toEqual([MAX_FILES_VIEWED_PRESSES, 1]);
+  for (const settle of t.settles) settle(AsyncResult.success(undefined));
+  await vi.advanceTimersByTimeAsync(0);
+  release();
+});
+
+it("keeps the original five-part auto-viewed memory key across routing options", () => {
+  expect(autoViewedMemoryScopeKey(first)).toBe('["files-viewed","project",null,"t3/code",1]');
+  const target = {
+    ...first,
+    reference: {
+      ...first.reference,
+      host: "github.example",
+      allowStale: true,
+      expectedAccountId: "account",
+    },
+  };
+  expect(autoViewedMemoryScopeKey(target)).toBe(
+    '["files-viewed","project","github.example","t3/code",1]',
+  );
+  expect(autoViewedMemoryScopeKey(target)).toBe(
+    autoViewedMemoryScopeKey({
+      ...target,
+      reference: { ...target.reference, allowStale: false, expectedAccountId: "other" },
+    }),
+  );
 });
