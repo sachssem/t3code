@@ -8,6 +8,10 @@ import { msg } from "gt-react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import {
+  mergePullRequestViewState,
+  type PullRequestViewState,
+} from "./components/pullRequest/pullRequestViewMemory.logic";
 import { useClosedViewStore } from "./closedViewStore";
 import { m } from "./i18n/messages";
 import { resolveStorage } from "./lib/storage";
@@ -79,6 +83,7 @@ export type RightPanelSurface =
       /** A clicked link waiting for the panel to show where it points; cleared once shown. */
       revealUrl?: string;
       detailTab?: PullRequestDetailTab;
+      viewState?: PullRequestViewState;
     }
   | { id: "pull-requests"; kind: "pull-requests" }
   /**
@@ -192,6 +197,11 @@ interface RightPanelStoreState {
   ) => void;
   /** Clears the surface's pending link only while it is still `revealUrl`. */
   settlePullRequestReveal: (ref: ScopedThreadRef, surfaceId: string, revealUrl: string) => void;
+  updatePullRequestViewState: (
+    ref: ScopedThreadRef,
+    surfaceId: string,
+    patch: PullRequestViewState,
+  ) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -351,6 +361,7 @@ export function pullRequestSurface(target: {
   number: number;
   url?: string;
   detailTab?: PullRequestDetailTab;
+  viewState?: PullRequestViewState;
 }): PullRequestSurface {
   return {
     id: pullRequestSurfaceId(target),
@@ -362,6 +373,7 @@ export function pullRequestSurface(target: {
     number: target.number,
     ...(typeof target.url === "string" ? { url: target.url } : {}),
     ...(target.detailTab === undefined ? {} : { detailTab: target.detailTab }),
+    ...(target.viewState === undefined ? {} : { viewState: target.viewState }),
   };
 }
 
@@ -910,6 +922,25 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             ...current,
             surfaces: current.surfaces.map((surface) =>
               surface.id === surfaceId ? withoutReveal(surface) : surface,
+            ),
+          }));
+        }),
+      updatePullRequestViewState: (ref, surfaceId, patch) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const existing = state.byThreadKey[threadKey]?.surfaces.find(
+            (surface) => surface.id === surfaceId,
+          );
+          if (existing?.kind !== "pull-request") return state;
+          return automaticUpdate(state, threadKey, (current) => ({
+            ...current,
+            surfaces: current.surfaces.map((surface) =>
+              surface.id === surfaceId && surface.kind === "pull-request"
+                ? {
+                    ...surface,
+                    viewState: mergePullRequestViewState(surface.viewState ?? {}, patch),
+                  }
+                : surface,
             ),
           }));
         }),

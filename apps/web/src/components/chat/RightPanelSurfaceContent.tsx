@@ -23,6 +23,7 @@ import {
 } from "../PersistentThreadTerminals";
 import { IssueDetailPanel } from "../issue/IssueDetailPanel";
 import { pullRequestPanelContext } from "../pullRequest/pullRequestDetail.logic";
+import { usePullRequestViewMemory } from "../pullRequest/usePullRequestViewMemory";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
@@ -86,6 +87,7 @@ export function RightPanelSurfaceContent(props: {
 }) {
   const { surface, threadRef, visible, onCloseSurface } = props;
   const gt = useGT();
+  const viewMemory = usePullRequestViewMemory(threadRef, surface?.id);
   if (surface === null) return null;
   switch (surface.kind) {
     case "preview":
@@ -159,6 +161,7 @@ export function RightPanelSurfaceContent(props: {
           onRevealSettled={(revealUrl) => {
             useRightPanelStore.getState().settlePullRequestReveal(threadRef, surface.id, revealUrl);
           }}
+          viewMemory={viewMemory}
           onTabChange={(tab) => {
             useRightPanelStore.getState().setPullRequestDetailTab(threadRef, surface.id, tab);
           }}
