@@ -2,6 +2,7 @@ import { assert, describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
   compileResolvedKeybindingsConfig,
+  DEFAULT_RESOLVED_KEYBINDINGS,
   parseKeybindingShortcut,
 } from "@t3tools/shared/keybindings";
 
@@ -17,6 +18,18 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it("shows the viewed shortcut in settings with its default conditions", () => {
+    expect(
+      buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS).find(
+        (row) => row.command === "pullRequest.toggleViewed",
+      ),
+    ).toMatchObject({
+      key: "v",
+      source: "Default",
+      when: "!terminalFocus && !editableFocus",
+    });
+  });
+
   it("keeps sibling row identities when a saved binding moves to the end", () => {
     const bindings = compileResolvedKeybindingsConfig([
       { command: "chat.new", key: "mod+n" },
