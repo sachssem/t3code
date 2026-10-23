@@ -38,6 +38,7 @@ import {
   useEffect,
   useEffectEvent,
   useRef,
+  useLayoutEffect,
   useState,
   type ReactNode,
 } from "react";
@@ -49,6 +50,15 @@ import { isEditableFocused } from "~/lib/editableFocus";
 import { isTerminalFocused } from "~/lib/terminalFocus";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { getHoveredPullRequestDiff } from "./pullRequestViewedShortcut";
+import {
+  findCodeScrollAnchor,
+  isAtCodeScrollTarget,
+  resolveCodeScrollRestore,
+  scheduleCodeScrollRestorePage,
+  type PullRequestViewMemory,
+  type PullRequestCodeScrollAnchor,
+} from "./pullRequestViewMemory.logic";
+import { usePullRequestScrollMemory } from "./usePullRequestViewMemory";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
@@ -373,7 +383,13 @@ function PullRequestCodeTab({
   refreshToken = 0,
   backgroundRefreshToken = 0,
   revealRequest = null,
+  viewMemory,
+  commitsLoaded = true,
+  onScrollRestoreChange,
 }: {
+  viewMemory?: PullRequestViewMemory | undefined;
+  commitsLoaded?: boolean;
+  onScrollRestoreChange?: ((restoring: boolean) => void) | undefined;
   scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -435,16 +451,19 @@ function PullRequestCodeTab({
   // A commit opened from the timeline or left selected across a force-push may no longer be
   // part of the pull request; read it as "All commits" instead of requesting its diff.
   const commit =
-    selectedCommitOid !== null && detail.commits.some((entry) => entry.oid === selectedCommitOid)
+    selectedCommitOid !== null &&
+    (!commitsLoaded || detail.commits.some((entry) => entry.oid === selectedCommitOid))
       ? selectedCommitOid
       : null;
   const scopeKey = JSON.stringify([environmentId, referenceKey, commit]);
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
+  const [restoreAnchor, setRestoreAnchor] = useState(() => viewMemory?.read()?.code?.[scopeKey]);
   const [stateScopeKey, setStateScopeKey] = useState(scopeKey);
   if (stateScopeKey !== scopeKey) {
     setStateScopeKey(scopeKey);
     setLastViewedFileKey(null);
+    setRestoreAnchor(viewMemory?.read()?.code?.[scopeKey]);
     setDraft(null);
     setSelectedLines(null);
     setToggledFiles(new Set());
@@ -923,6 +942,7 @@ function PullRequestCodeTab({
   };
 
   const revealFile = (path: string) => {
+    endScrollRestore();
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
     // Unfold only: a second reveal before the unfold renders must not fold the file again.
@@ -1211,7 +1231,9 @@ function PullRequestCodeTab({
   );
 
   const selectedCommit = orderedCommits.find((entry) => entry.oid === commit);
-  const scopeLabel = selectedCommit ? selectedCommit.messageHeadline : "All commits";
+  const scopeLabel = selectedCommit
+    ? selectedCommit.messageHeadline
+    : (commit?.slice(0, 7) ?? "All commits");
   const changeIgnoreWhitespace = (next: boolean) => {
     setIgnoreWhitespace(next);
     setDraft(null);
@@ -1220,7 +1242,7 @@ function PullRequestCodeTab({
   const toolbar = (
     <div className="@container flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        {orderedCommits.length > 0 ? (
+        {orderedCommits.length > 0 || commit !== null ? (
           <DropdownMenu>
             <DropdownMenuTrigger
               render={<Button size="xs" variant="secondary" />}
@@ -1541,9 +1563,111 @@ function PullRequestCodeTab({
       </div>
     </div>
   );
-  // A file not loaded yet pages forward each time a slice arrives; once loaded, the viewer
-  // positions it when it renders it.
-
+  const scrollWriter = usePullRequestScrollMemory(viewMemory, scopeKey);
+  const scrollRestore = useRef<{ anchor: PullRequestCodeScrollAnchor } | null>(null);
+  const notifyScrollRestore = useEffectEvent((restoring: boolean) =>
+    onScrollRestoreChange?.(restoring),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds and flushes the viewer scroll restore across mounting
+  useLayoutEffect(() => {
+    const anchor = restoreAnchor;
+    scrollRestore.current = anchor ? { anchor } : null;
+    notifyScrollRestore(anchor !== undefined);
+    return () => {
+      scrollWriter.flush();
+      notifyScrollRestore(false);
+    };
+  }, [restoreAnchor, scrollWriter]);
+  const endScrollRestore = () => {
+    setRestoreAnchor(undefined);
+    scrollRestore.current = null;
+    onScrollRestoreChange?.(false);
+  };
+  // Persist paths: parser cache keys used as viewer IDs change after refreshes and theme changes.
+  const scrollFiles = items.map((item) => ({
+    id: resolveFileDiffPath(item.fileDiff),
+    viewerId: item.id,
+  }));
+  const advanceRestore = useEffectEvent(() => loadNextSlice());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads missing remote pages needed by the stored scroll anchor
+  useEffect(
+    () =>
+      scheduleCodeScrollRestorePage(restoreAnchor, scrollFiles, canLoadNextSlice, () =>
+        advanceRestore(),
+      ),
+    [restoreAnchor, scrollFiles, canLoadNextSlice],
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions the imperative diff viewer while its virtual layout settles
+  useEffect(() => {
+    const restore = scrollRestore.current;
+    const instance = viewer?.getInstance();
+    if (restore === null || instance === undefined || viewer === null || items.length === 0) return;
+    const viewerIdByPath = new Map(scrollFiles.map((file) => [file.id, file.viewerId]));
+    const topOf = (path: string) => {
+      const id = viewerIdByPath.get(path);
+      return id === undefined ? undefined : instance.getTopForItem(id);
+    };
+    const resolve = () => {
+      const index = scrollFiles.findIndex((file) => file.id === restore.anchor.itemId);
+      const top = topOf(restore.anchor.itemId);
+      const next = scrollFiles[index + 1];
+      const nextTop = next === undefined ? undefined : topOf(next.id);
+      return resolveCodeScrollRestore(
+        restore.anchor,
+        {
+          loaded: top !== undefined,
+          height: top === undefined || nextTop === undefined ? undefined : nextTop - top,
+        },
+        nextCursor === null,
+      );
+    };
+    const apply = (target: ReturnType<typeof resolve>["target"]) => {
+      if (target.type === "position") viewer.scrollTo(target);
+      else {
+        const file = scrollFiles.find((file) => file.id === target.id);
+        if (file) viewer.scrollTo({ ...target, id: file.viewerId });
+      }
+    };
+    const { target, done } = resolve();
+    apply(target);
+    if (!done) return;
+    if (target.type !== "item") return;
+    const deadline = performance.now() + 2_000;
+    let stableFrames = 0;
+    let frame: number;
+    const settle = () => {
+      if (scrollRestore.current !== restore) return;
+      const next = resolve().target;
+      const current = findCodeScrollAnchor(instance.getScrollTop(), scrollFiles, topOf);
+      if (isAtCodeScrollTarget(current, next)) stableFrames += 1;
+      else {
+        stableFrames = 0;
+        apply(next);
+      }
+      if (stableFrames < 8 && performance.now() < deadline) frame = requestAnimationFrame(settle);
+    };
+    frame = requestAnimationFrame(settle);
+    return () => cancelAnimationFrame(frame);
+  }, [items, scrollFiles, nextCursor, viewer]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the diff viewer scroll position for persistent anchors
+  useEffect(() => {
+    const instance = viewer?.getInstance();
+    if (instance === undefined) return;
+    const pathsById = new Map(scrollFiles.map((file) => [file.id, file.viewerId]));
+    return instance.subscribeToScroll((scrollTop) => {
+      if (scrollRestore.current !== null) return;
+      // Scroll notifications precede rendering after deep jumps, so consult every file.
+      const covering = findCodeScrollAnchor(scrollTop, scrollFiles, (path) => {
+        const id = pathsById.get(path);
+        return id === undefined ? undefined : instance.getTopForItem(id);
+      });
+      const firstFile = scrollFiles[0];
+      const anchor =
+        covering ?? (scrollTop === 0 && firstFile ? { itemId: firstFile.id, offset: 0 } : null);
+      if (anchor !== null)
+        scrollWriter.schedule({ code: { [scopeKey]: { ...anchor, scrollTop } } });
+    });
+  }, [scopeKey, scrollFiles, viewer, scrollWriter]);
   const answerReveal = useEffectEvent(() => {
     if (revealRequest === null || answeredRevealNonce.current === revealRequest.nonce) return;
     if (!items.some((item) => resolveFileDiffPath(item.fileDiff) === revealRequest.path)) {
@@ -1605,7 +1729,13 @@ function PullRequestCodeTab({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div
+      className="flex h-full min-h-0 flex-col"
+      onWheelCapture={endScrollRestore}
+      onPointerDownCapture={endScrollRestore}
+      onKeyDownCapture={endScrollRestore}
+      onTouchStartCapture={endScrollRestore}
+    >
       {toolbar}
       {orphanFiles.size > 0 ? (
         <div className="shrink-0 border-b border-border/60">

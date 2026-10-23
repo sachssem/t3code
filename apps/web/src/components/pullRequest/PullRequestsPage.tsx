@@ -1,4 +1,5 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { usePullRequestViewMemory } from "./usePullRequestViewMemory";
 import { applyPullRequestDraftFilterChange } from "@t3tools/client-runtime/pull-request-query";
 import { Spinner } from "~/components/ui/spinner";
 import type { PullRequestSpeedActionResult } from "~/components/pullRequest/PullRequestSpeedActions";
@@ -191,6 +192,7 @@ export function PullRequestsPage() {
   );
   const rightPanelPresent = rightPanelPresence.present;
   const renderedPullRequestSurface = rightPanelPresence.value?.activeSurface ?? null;
+  const viewMemory = usePullRequestViewMemory(rightPanelRef, renderedPullRequestSurface?.id);
   const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
   const panelEnvironmentId =
     (renderedPullRequestSurface?.environmentId as EnvironmentId | undefined) ??
@@ -1510,6 +1512,14 @@ export function PullRequestsPage() {
               shortcutsEnabled={activePullRequestSurface?.id === renderedPullRequestSurface.id}
               key={renderedPullRequestSurface.id}
               environmentId={panelEnvironmentId}
+              initialTab={renderedPullRequestSurface.detailTab ?? "summary"}
+              viewMemory={viewMemory}
+              onTabChange={(tab) => {
+                if (rightPanelRef !== null)
+                  useRightPanelStore
+                    .getState()
+                    .setPullRequestDetailTab(rightPanelRef, renderedPullRequestSurface.id, tab);
+              }}
               onGuideShown={onGuideShown}
               onSelectPullRequest={(reference) => {
                 if (rightPanelRef === null) return;
