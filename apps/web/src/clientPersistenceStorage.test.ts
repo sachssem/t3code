@@ -79,3 +79,21 @@ describe("clientPersistenceStorage", () => {
     expect(write).not.toHaveBeenCalled();
   });
 });
+
+it("migrates legacy collapse settings before decoding browser storage", async () => {
+  const testWindow = getTestWindow();
+  testWindow.localStorage.setItem(
+    "t3code:client-settings:v1",
+    JSON.stringify({
+      pullRequestCollapseTestFiles: false,
+      pullRequestMarkGeneratedFilesViewed: false,
+      wordWrap: false,
+    }),
+  );
+  const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
+  expect(readBrowserClientSettings()).toMatchObject({
+    diffCollapsePathPatterns: [],
+    pullRequestMarkAutoCollapsedFilesViewed: false,
+    wordWrap: false,
+  });
+});

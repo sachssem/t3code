@@ -1,7 +1,17 @@
+import {
+  MAX_FILES_VIEWED_PRESSES,
+  PullRequestSetFilesViewedInput,
+  ProjectId,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   countUnreviewedLines,
+  retainViewedAtOpen,
+  toFileViewedBatches,
+  viewedFilePaths,
+  takeAutoCollapsedFilesToMarkViewed,
   isFileViewed,
   isStaleViewedState,
   revertFileViewedOverlay,
@@ -9,6 +19,8 @@ import {
   toFileViewedStates,
   type FileViewedOverlay,
 } from "./pullRequestFilesViewed.logic";
+
+const decodeSetFilesViewed = Schema.decodeSync(PullRequestSetFilesViewedInput);
 
 const NO_OVERLAY: FileViewedOverlay = new Map();
 const NOTHING_PENDING: ReadonlySet<string> = new Set();
@@ -152,4 +164,165 @@ describe("countUnreviewedLines", () => {
       ),
     ).toBeNull();
   });
+});
+
+describe("viewedFilePaths", () => {
+  it("lists cleared files, not stale ones, with the reader's presses on top", () => {
+    expect(viewedFilePaths(null, NO_OVERLAY)).toBeNull();
+    expect([...(viewedFilePaths(states, NO_OVERLAY) ?? [])]).toEqual(["a.ts"]);
+    const overlay = new Map([
+      ["a.ts", false],
+      ["b.ts", true],
+    ]);
+    expect([...(viewedFilePaths(states, overlay) ?? [])]).toEqual(["b.ts"]);
+  });
+});
+
+describe("takeAutoCollapsedFilesToMarkViewed", () => {
+  const generated = ["a.ts", "b.ts", "c.ts", "d.ts"];
+  const answer = (files: Record<string, "viewed" | "unviewed" | "dismissed">) =>
+    toFileViewedStates({
+      files: Object.entries(files).map(([path, state]) => ({ path, state })),
+      truncated: false,
+    });
+
+  it("marks what is not viewed once, and waits for the host's first answer", () => {
+    const memory = { touched: new Set<string>(), remarked: new Set<string>() };
+    expect(takeAutoCollapsedFilesToMarkViewed(generated, null, NO_OVERLAY, memory)).toEqual([]);
+    const pressing = new Map([["d.ts", false]]);
+    expect(takeAutoCollapsedFilesToMarkViewed(generated, states, pressing, memory)).toEqual([
+      "b.ts",
+      "c.ts",
+    ]);
+    // The same answer again, or a failed write leaving it standing, marks nothing more.
+    expect(takeAutoCollapsedFilesToMarkViewed(generated, states, pressing, memory)).toEqual([]);
+  });
+
+  it("leaves a file the reader unticked alone, and marks it again only after a push", () => {
+    const memory = { touched: new Set<string>(), remarked: new Set<string>() };
+    expect(
+      takeAutoCollapsedFilesToMarkViewed(
+        ["a.ts"],
+        answer({ "a.ts": "unviewed" }),
+        NO_OVERLAY,
+        memory,
+      ),
+    ).toEqual(["a.ts"]);
+    takeAutoCollapsedFilesToMarkViewed(["a.ts"], answer({ "a.ts": "viewed" }), NO_OVERLAY, memory);
+    expect(
+      takeAutoCollapsedFilesToMarkViewed(
+        ["a.ts"],
+        answer({ "a.ts": "unviewed" }),
+        NO_OVERLAY,
+        memory,
+      ),
+    ).toEqual([]);
+
+    const pushed = { touched: new Set<string>(), remarked: new Set<string>() };
+    const dismissed = answer({ "a.ts": "dismissed" });
+    expect(takeAutoCollapsedFilesToMarkViewed(["a.ts"], dismissed, NO_OVERLAY, pushed)).toEqual([
+      "a.ts",
+    ]);
+    expect(takeAutoCollapsedFilesToMarkViewed(["a.ts"], dismissed, NO_OVERLAY, pushed)).toEqual([]);
+    takeAutoCollapsedFilesToMarkViewed(["a.ts"], answer({ "a.ts": "viewed" }), NO_OVERLAY, pushed);
+    expect(takeAutoCollapsedFilesToMarkViewed(["a.ts"], dismissed, NO_OVERLAY, pushed)).toEqual([
+      "a.ts",
+    ]);
+  });
+});
+
+it("leaves files already viewed at open unmarked after a manual unmark", () => {
+  const memory = { touched: new Set<string>(), remarked: new Set<string>() };
+  expect(takeAutoCollapsedFilesToMarkViewed(["a.ts"], states, NO_OVERLAY, memory)).toEqual([]);
+  const unmarked = toFileViewedStates({
+    files: [{ path: "a.ts", state: "unviewed" }],
+    truncated: false,
+  });
+  expect(takeAutoCollapsedFilesToMarkViewed(["a.ts"], unmarked, NO_OVERLAY, memory)).toEqual([]);
+});
+
+it("sends every auto-view press within the viewed-files contract limit", () => {
+  const overlay = new Map(
+    Array.from(
+      { length: MAX_FILES_VIEWED_PRESSES * 2 + 1 },
+      (_, index) => [`src/${index}.ts`, index % 2 === 0] as const,
+    ),
+  );
+  const batches = toFileViewedBatches(overlay);
+  expect(batches).toHaveLength(3);
+  for (const files of batches) {
+    expect(() =>
+      decodeSetFilesViewed({
+        projectId: ProjectId.make("project"),
+        repository: "acme/repo",
+        number: 1,
+        files,
+      }),
+    ).not.toThrow();
+  }
+  expect(batches.flat()).toEqual([...overlay].map(([path, viewed]) => ({ path, viewed })));
+  expect(toFileViewedBatches(new Map())).toEqual([]);
+});
+
+it("removes automatic marks from lines left to review through the same overlay", () => {
+  const result = {
+    files: [
+      { path: "pnpm-lock.yaml", state: "unviewed" as const, additions: 100, deletions: 50 },
+      { path: "src/app.ts", state: "unviewed" as const, additions: 3, deletions: 1 },
+    ],
+    truncated: false,
+  };
+  const memory = { touched: new Set<string>(), remarked: new Set<string>() };
+  const marks = takeAutoCollapsedFilesToMarkViewed(
+    ["pnpm-lock.yaml"],
+    toFileViewedStates(result),
+    NO_OVERLAY,
+    memory,
+  );
+  expect(countUnreviewedLines(result, new Map(marks.map((path) => [path, true])))).toEqual({
+    additions: 3,
+    deletions: 1,
+  });
+});
+
+it("does not mark historical commit paths absent from a complete PR viewed list", () => {
+  const memory = { touched: new Set<string>(), remarked: new Set<string>() };
+  expect(
+    takeAutoCollapsedFilesToMarkViewed(["deleted.ts", "b.ts"], states, NO_OVERLAY, memory),
+  ).toEqual(["b.ts"]);
+  expect(memory.touched.has("deleted.ts")).toBe(false);
+  expect(
+    takeAutoCollapsedFilesToMarkViewed(["deleted.ts"], states, NO_OVERLAY, memory, true),
+  ).toEqual(["deleted.ts"]);
+});
+
+it("isolates automatic failures from user presses and lets the user's last press win", () => {
+  const user = new Map([["mine.ts", false]]);
+  const automatic = new Map([
+    ["unknown.ts", true],
+    ["mine.ts", true],
+  ]);
+  const batches = toFileViewedBatches(user, automatic);
+  expect(batches).toEqual([
+    [{ path: "mine.ts", viewed: false }],
+    [{ path: "unknown.ts", viewed: true }],
+  ]);
+  const reverted = revertFileViewedOverlay(
+    new Map([
+      ["mine.ts", false],
+      ["unknown.ts", true],
+    ]),
+    batches[1]!,
+    new Set(["unknown.ts"]),
+  );
+  expect([...reverted]).toEqual([["mine.ts", false]]);
+});
+
+it("stops force-collapsing dismissed or unviewed paths without adding newly viewed paths", () => {
+  const initial = new Set(["a.ts", "c.ts"]);
+  const retained = retainViewedAtOpen(initial, viewedFilePaths(states, NO_OVERLAY)!);
+  expect([...retained]).toEqual(["a.ts"]);
+  const unmarked = retainViewedAtOpen(retained, new Set(["b.ts"]));
+  expect(unmarked.size).toBe(0);
+  expect(retainViewedAtOpen(unmarked, new Set(["a.ts"]))).toBe(unmarked);
 });
