@@ -1141,6 +1141,9 @@ export function toPullRequestCommitStats(result: PullRequestCommitStats.Result) 
               {
                 additions: Math.max(0, commit.additions),
                 deletions: Math.max(0, commit.deletions),
+                ...(commit.changedFilesIfAvailable == null
+                  ? {}
+                  : { changedFiles: Math.max(0, commit.changedFilesIfAvailable) }),
               },
             ] as const,
           ]
@@ -1593,6 +1596,7 @@ export interface GitHubPullRequestFilesPatch {
   readonly truncated: boolean;
   readonly rawCount: number;
   readonly omittedFileStats: ReadonlyArray<PullRequestOmittedFileStat>;
+  readonly fileStats?: ReadonlyArray<GitHubPullRequestFileStat>;
 }
 
 /** The files API omits diff --git headers; assemble them for unified-patch viewers. */
@@ -1615,11 +1619,25 @@ const decodeCommitFiles = decodeJsonResult(
 function toFilesPatch(entries: ReadonlyArray<unknown>): GitHubPullRequestFilesPatch {
   const sections: string[] = [];
   const omittedFileStats: PullRequestOmittedFileStat[] = [];
+  const fileStats: GitHubPullRequestFileStat[] = [];
   let truncated = false;
   for (const entry of entries) {
     const file = decodeFileEntry(entry);
     if (Exit.isFailure(file)) continue;
     const value = file.value;
+    if (
+      value.filename.trim().length > 0 &&
+      typeof value.additions === "number" &&
+      value.additions >= 0 &&
+      typeof value.deletions === "number" &&
+      value.deletions >= 0
+    ) {
+      fileStats.push({
+        path: value.filename,
+        additions: value.additions,
+        deletions: value.deletions,
+      });
+    }
     const hunks = value.patch ?? "";
     const status = value.status?.trim().toLowerCase();
     if (hunks.length === 0) {
@@ -1655,6 +1673,7 @@ function toFilesPatch(entries: ReadonlyArray<unknown>): GitHubPullRequestFilesPa
     truncated,
     rawCount: entries.length,
     omittedFileStats,
+    ...(fileStats.length === entries.length ? { fileStats } : {}),
   };
 }
 

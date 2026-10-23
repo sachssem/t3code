@@ -7,8 +7,8 @@ import type { CodeViewAnnotationArgs, CodeViewDiffItem, CodeViewHandle } from "@
 import type {
   EnvironmentId,
   PullRequestDetailView,
-  PullRequestDiffSide,
   PullRequestDiffResult,
+  PullRequestDiffSide,
   PullRequestOmittedFileStat,
   PullRequestRef,
   PullRequestReviewPosition,
@@ -154,6 +154,28 @@ interface DiffSlice {
   readonly truncated: boolean;
   readonly nextCursor: string | null;
   readonly omittedFileStats: ReadonlyArray<PullRequestOmittedFileStat>;
+  readonly fileStats?: ReadonlyArray<PullRequestOmittedFileStat>;
+}
+
+function sameFileStats(
+  left: ReadonlyArray<PullRequestOmittedFileStat> | undefined,
+  right: ReadonlyArray<PullRequestOmittedFileStat> | undefined,
+) {
+  return (
+    left === right ||
+    (left !== undefined &&
+      right !== undefined &&
+      left.length === right.length &&
+      left.every((file, index) => {
+        const refreshed = right[index];
+        return (
+          refreshed !== undefined &&
+          refreshed.path === file.path &&
+          refreshed.additions === file.additions &&
+          refreshed.deletions === file.deletions
+        );
+      }))
+  );
 }
 
 // Show host counts outside the shadow root; hunk totals are zero when hosts withhold hunks.
@@ -342,6 +364,7 @@ function PullRequestCodeTab({
   detail,
   selectedCommitOid,
   onSelectedCommitChange,
+  onCommitDiffChange,
   pendingFinding,
   fixFindingLabel = "Fix in a thread",
   onFixFinding,
@@ -357,6 +380,10 @@ function PullRequestCodeTab({
   detail: PullRequestDetailView;
   selectedCommitOid: string | null;
   onSelectedCommitChange: (oid: string | null) => void;
+  onCommitDiffChange?: (
+    oid: string | null,
+    pages: ReadonlyArray<Pick<PullRequestDiffResult, "fileStats" | "nextCursor">>,
+  ) => void;
   pendingFinding?: string | null;
   fixFindingLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
@@ -428,6 +455,10 @@ function PullRequestCodeTab({
   }
 
   const loadedSlices = sliceState.key === scopeKey ? sliceState.slices : NO_SLICES;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports loaded commit pages to the panel header outside this lazy viewer
+  useEffect(() => {
+    onCommitDiffChange?.(commit, loadedSlices);
+  }, [commit, loadedSlices, onCommitDiffChange]);
   const cursor = sliceState.key === scopeKey ? sliceState.cursor : null;
   const diffQuery = useEnvironmentQuery(
     pullRequestEnvironment.diff({
@@ -463,6 +494,7 @@ function PullRequestCodeTab({
         truncated: data.truncated,
         nextCursor: data.nextCursor,
         omittedFileStats: data.omittedFileStats ?? [],
+        ...(data.fileStats === undefined ? {} : { fileStats: data.fileStats }),
       };
       const index = slices.findIndex((slice) => slice.cursor === cursor);
       if (index === -1) {
@@ -474,16 +506,8 @@ function PullRequestCodeTab({
         existing.patch === next.patch &&
         existing.truncated === next.truncated &&
         existing.nextCursor === next.nextCursor &&
-        existing.omittedFileStats.length === next.omittedFileStats.length &&
-        existing.omittedFileStats.every((file, index) => {
-          const refreshed = next.omittedFileStats[index];
-          return (
-            refreshed !== undefined &&
-            refreshed.path === file.path &&
-            refreshed.additions === file.additions &&
-            refreshed.deletions === file.deletions
-          );
-        })
+        sameFileStats(existing.fileStats, next.fileStats) &&
+        sameFileStats(existing.omittedFileStats, next.omittedFileStats)
       ) {
         return previous;
       }
@@ -594,6 +618,7 @@ function PullRequestCodeTab({
               nextCursor: page.nextCursor,
               source: page,
               omittedFileStats: page.omittedFileStats ?? [],
+              ...(page.fileStats === undefined ? {} : { fileStats: page.fileStats }),
             })),
           });
           setAppliedPage(null);
@@ -1222,8 +1247,17 @@ function PullRequestCodeTab({
                         />
                         <TooltipPopup side="top">{entry.messageHeadline}</TooltipPopup>
                       </Tooltip>
-                      <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
-                        {entry.oid.slice(0, 7)}
+                      <span className="ml-auto flex shrink-0 items-center gap-2">
+                        {entry.additions !== undefined && entry.deletions !== undefined ? (
+                          <PullRequestDiffStat
+                            additions={entry.additions}
+                            deletions={entry.deletions}
+                            className="font-mono text-2xs"
+                          />
+                        ) : null}
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {entry.oid.slice(0, 7)}
+                        </span>
                       </span>
                     </span>
                   </DropdownMenuRadioItem>

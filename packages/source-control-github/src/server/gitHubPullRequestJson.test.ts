@@ -8,12 +8,14 @@ import {
   pullRequestLookup,
   toPullRequestWatchFingerprint,
   decodePullRequestFilesJson,
+  decodeCommitFilesJson,
   decodePullRequestStacksJson,
   LenientPullRequestList,
   reviewThreadConversation,
   toLabelCandidates,
   toPullRequestActivityPage,
   toPullRequestCore,
+  toPullRequestCommitStats,
   toPullRequestFilesViewedPage,
   toPullRequestRows,
   toReviewerCandidates,
@@ -27,6 +29,7 @@ import {
   LabelCandidates,
   PullRequestActivity,
   PullRequestCore,
+  PullRequestCommitStats,
   PullRequestFilesViewed,
   ReviewerCandidates,
   ViewerPermissions,
@@ -619,6 +622,48 @@ describe("pull request detail decoding", () => {
 });
 
 describe("review thread decoding", () => {
+  it("carries per-commit file counts through the stats query and omits unavailable counts", () => {
+    const result = expectSuccess(
+      through(
+        PullRequestCommitStats.result,
+        toPullRequestCommitStats,
+      )(
+        JSON.stringify({
+          data: {
+            nodes: [
+              {
+                __typename: "Commit",
+                oid: "abc123",
+                additions: 18,
+                deletions: 7,
+                changedFilesIfAvailable: 4,
+              },
+              {
+                __typename: "Commit",
+                oid: "def456",
+                additions: 3,
+                deletions: 0,
+                changedFilesIfAvailable: null,
+              },
+              {
+                __typename: "Commit",
+                oid: "ghi789",
+                additions: -1,
+                deletions: -2,
+                changedFilesIfAvailable: -3,
+              },
+              null,
+            ],
+          },
+        }),
+      ),
+    );
+    expect([...result]).toEqual([
+      ["abc123", { additions: 18, deletions: 7, changedFiles: 4 }],
+      ["def456", { additions: 3, deletions: 0 }],
+      ["ghi789", { additions: 0, deletions: 0, changedFiles: 0 }],
+    ]);
+  });
   const threadsJson = (
     nodes: ReadonlyArray<Record<string, unknown>>,
     totalCount = nodes.length,
@@ -1418,6 +1463,31 @@ describe("review submission payload", () => {
 });
 
 describe("decodePullRequestFilesJson", () => {
+  it("preserves commit file stats independently of hunks, including binaries and renames", () => {
+    const files = [
+      { filename: "app.ts", additions: 5, deletions: 3, patch: "@@ -1 +1 @@\n-old\n+new" },
+      { filename: "image.png", additions: 4, deletions: 2 },
+      {
+        filename: "renamed.ts",
+        previous_filename: "old.ts",
+        status: "renamed",
+        additions: 0,
+        deletions: 0,
+      },
+    ];
+    expect(expectSuccess(decodeCommitFilesJson(JSON.stringify({ files }))).fileStats).toEqual(
+      files.map(({ filename, additions, deletions }) => ({ path: filename, additions, deletions })),
+    );
+  });
+
+  it.each([
+    [{ filename: "missing-counts.ts" }],
+    [{ filename: "valid.ts", additions: 1, deletions: 0 }, { filename: 42 }],
+  ])("withholds file stats when the commit page is incomplete (%j)", (...files) => {
+    expect(
+      expectSuccess(decodeCommitFilesJson(JSON.stringify({ files }))).fileStats,
+    ).toBeUndefined();
+  });
   it("quotes literal backslashes without interpreting them as escapes", () => {
     const result = expectSuccess(
       decodePullRequestFilesJson(

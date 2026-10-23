@@ -44,6 +44,7 @@ import {
   mergePullRequestThreadComments,
   orderPullRequestComments,
   pullRequestCheckoutCommand,
+  pullRequestHeaderChangeStat,
   checkoutFailureDescription,
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
@@ -57,6 +58,90 @@ import {
   readableFailure,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
+
+describe("pull request header change stat", () => {
+  const detail = {
+    changedFiles: 12,
+    additions: 300,
+    deletions: 40,
+    commits: [
+      {
+        oid: "abc1234def",
+        messageHeadline: "Counted",
+        committedDate: "2026-01-01T00:00:00.000Z",
+        additions: 18,
+        deletions: 7,
+        changedFiles: 6,
+      },
+      {
+        oid: "merge99",
+        messageHeadline: "Merge main",
+        committedDate: "2026-01-02T00:00:00.000Z",
+      },
+    ],
+  };
+  const files = [
+    { path: "src/app.ts", additions: 4, deletions: 2 },
+    { path: "src/app.test.ts", additions: 5, deletions: 1 },
+    { path: "README.md", additions: 2, deletions: 1 },
+    { path: "__mocks__/api.ts", additions: 3, deletions: 1 },
+    { path: "bun.lock", additions: 4, deletions: 2 },
+    { path: "renamed.ts", additions: 0, deletions: 0 },
+  ];
+  const all = {
+    commitOid: null,
+    files: 12,
+    lines: { additions: 300, deletions: 40 },
+    breakdown: undefined,
+  };
+
+  it("counts the whole pull request without a commit scope", () => {
+    expect(pullRequestHeaderChangeStat(detail, null)).toEqual(all);
+  });
+
+  it("counts the scoped commit while its breakdown is loading", () => {
+    expect(pullRequestHeaderChangeStat(detail, "abc1234def")).toEqual({
+      commitOid: "abc1234def",
+      files: 6,
+      lines: { additions: 18, deletions: 7 },
+      breakdown: null,
+    });
+  });
+
+  it("classifies all pages of the scoped commit, including files without hunks", () => {
+    expect(
+      pullRequestHeaderChangeStat(detail, "abc1234def", [
+        { fileStats: files.slice(0, 2), nextCursor: "2" },
+        { fileStats: files.slice(2), nextCursor: null },
+      ]).breakdown,
+    ).toEqual({
+      code: { additions: 4, deletions: 2 },
+      tests: { additions: 5, deletions: 1 },
+      docs: { additions: 2, deletions: 1 },
+      mocks: { additions: 3, deletions: 1 },
+      generated: { additions: 4, deletions: 2 },
+    });
+  });
+
+  it.each([
+    [{ fileStats: files.slice(0, 2), nextCursor: "2" }],
+    [{ fileStats: files.slice(0, 2), nextCursor: null }],
+    [{ nextCursor: null }],
+    [{ fileStats: [...files.slice(0, 5), files[0]!], nextCursor: null }],
+    [{ fileStats: files.map((file) => ({ ...file, additions: 0 })), nextCursor: null }],
+  ])("withholds an incomplete or inconsistent breakdown (%j)", (...pages) => {
+    expect(pullRequestHeaderChangeStat(detail, "abc1234def", pages).breakdown).toBeNull();
+  });
+
+  it.each(["merge99", "gone"])("falls back to PR totals for an uncounted commit %s", (oid) => {
+    expect(pullRequestHeaderChangeStat(detail, oid)).toEqual(all);
+  });
+
+  it("falls back when the host has line counts but no file count", () => {
+    const commits = detail.commits.map((commit) => ({ ...commit, changedFiles: undefined }));
+    expect(pullRequestHeaderChangeStat({ ...detail, commits }, "abc1234def")).toEqual(all);
+  });
+});
 
 describe("pull request checkout commands", () => {
   it("quotes shell metacharacters in Forgejo repository URLs", () => {

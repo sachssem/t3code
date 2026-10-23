@@ -17,6 +17,7 @@ import {
   type EnvironmentId,
   type PullRequestAction,
   type PullRequestDetail,
+  type PullRequestDiffResult,
   type PullRequestMergeMethod,
   type PullRequestListEntry,
   type PullRequestUpdateMethod,
@@ -46,6 +47,7 @@ import {
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { type PullRequestDetailTab, useRightPanelStore } from "~/rightPanelStore";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -125,6 +127,7 @@ import {
   isStackedPullRequestBase,
   pullRequestActionNeedsHostRefresh,
   pullRequestCheckoutCommand,
+  pullRequestHeaderChangeStat,
   pullRequestFindingKey,
   pullRequestHandoffLabels,
   PULL_REQUEST_MERGE_METHOD_LABELS,
@@ -259,6 +262,28 @@ function pullRequestStackReference(
       };
 }
 
+function PullRequestHeaderCommitScope({ oid }: { oid: string }) {
+  const shortOid = oid.slice(0, 7);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            className="inline-flex shrink-0 items-center gap-1 font-mono"
+            aria-label={`Counting commit ${shortOid} only`}
+          />
+        }
+      >
+        <GitCommitHorizontalIcon aria-hidden className="size-3" />
+        {shortOid}
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">
+        These counts are for commit {shortOid}. Choose All commits to count the whole pull request.
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
 export function PullRequestDetailPanel({
   environmentId,
   shortcutsEnabled,
@@ -382,6 +407,20 @@ export function PullRequestDetailPanel({
   }>(() => ({ pullRequestKey, oid: null }));
   const selectedCodeCommitOid =
     codeCommitScope.pullRequestKey === pullRequestKey ? codeCommitScope.oid : null;
+  const codeDiffScopeKey = `${environmentId}:${pullRequestKey}`;
+  const [codeDiffPages, setCodeDiffPages] = useState<{
+    readonly scopeKey: string;
+    readonly oid: string | null;
+    readonly pages: ReadonlyArray<Pick<PullRequestDiffResult, "fileStats" | "nextCursor">>;
+  } | null>(null);
+  const onCommitDiffChange = useStableCallback(
+    (
+      oid: string | null,
+      pages: ReadonlyArray<Pick<PullRequestDiffResult, "fileStats" | "nextCursor">>,
+    ) => {
+      setCodeDiffPages({ scopeKey: codeDiffScopeKey, oid, pages });
+    },
+  );
   const selectCodeCommit = (oid: string | null) => {
     setCodeCommitScope({ pullRequestKey, oid });
   };
@@ -1127,6 +1166,17 @@ export function PullRequestDetailPanel({
     detail?.state === "open" ? (detail.workflowApprovalsRequired ?? 0) : 0;
   const freshness = detail === null ? null : resolveBaseFreshness(detail);
   const visibleTabs = TABS.filter((item) => isTabAvailable(item.value));
+  const headerStat =
+    detail === null
+      ? null
+      : pullRequestHeaderChangeStat(
+          detail,
+          tab === "code" ? selectedCodeCommitOid : null,
+          codeDiffPages?.scopeKey === codeDiffScopeKey &&
+            codeDiffPages.oid === selectedCodeCommitOid
+            ? codeDiffPages.pages
+            : [],
+        );
   const can = (action: PullRequestAction) =>
     detail?.capabilities.actions.includes(action) === true &&
     detail.viewerPermissions.actions.includes(action);
@@ -1463,20 +1513,24 @@ export function PullRequestDetailPanel({
                     </Tooltip>
                   </span>
                   <span className="ml-auto inline-flex shrink-0 items-baseline justify-end gap-2 text-2xs">
+                    {headerStat?.commitOid ? (
+                      <PullRequestHeaderCommitScope oid={headerStat.commitOid} />
+                    ) : null}
                     <span
                       className="inline-flex items-baseline gap-1 tabular-nums"
-                      aria-label={`${detail.changedFiles.toLocaleString()} changed ${
-                        detail.changedFiles === 1 ? "file" : "files"
+                      aria-label={`${(headerStat?.files ?? detail.changedFiles).toLocaleString()} changed ${
+                        (headerStat?.files ?? detail.changedFiles) === 1 ? "file" : "files"
                       }`}
                     >
                       <FileDiffIcon aria-hidden className="size-3 self-center" />
-                      {detail.changedFiles.toLocaleString()}
+                      {(headerStat?.files ?? detail.changedFiles).toLocaleString()}
                     </span>
                     <PullRequestChangeBreakdownStat
                       environmentId={environmentId}
                       reference={reference}
-                      additions={detail.additions}
-                      deletions={detail.deletions}
+                      additions={headerStat?.lines.additions ?? detail.additions}
+                      deletions={headerStat?.lines.deletions ?? detail.deletions}
+                      breakdown={headerStat?.breakdown}
                       className="shrink-0 font-mono text-2xs"
                       eager
                     />
@@ -1557,16 +1611,22 @@ export function PullRequestDetailPanel({
                     copiedLabel="Branch name copied"
                   />
                 }
-                files={`${detail.changedFiles.toLocaleString()} ${detail.changedFiles === 1 ? "file" : "files"}`}
+                files={`${(headerStat?.files ?? detail.changedFiles).toLocaleString()} ${(headerStat?.files ?? detail.changedFiles) === 1 ? "file" : "files"}`}
                 diffStat={
-                  <PullRequestChangeBreakdownStat
-                    environmentId={environmentId}
-                    reference={reference}
-                    additions={detail.additions}
-                    deletions={detail.deletions}
-                    className="shrink-0 font-mono text-xs"
-                    eager
-                  />
+                  <>
+                    {headerStat?.commitOid ? (
+                      <PullRequestHeaderCommitScope oid={headerStat.commitOid} />
+                    ) : null}
+                    <PullRequestChangeBreakdownStat
+                      environmentId={environmentId}
+                      reference={reference}
+                      additions={headerStat?.lines.additions ?? detail.additions}
+                      deletions={headerStat?.lines.deletions ?? detail.deletions}
+                      breakdown={headerStat?.breakdown}
+                      className="shrink-0 font-mono text-xs"
+                      eager
+                    />
+                  </>
                 }
               />
             ) : null}
@@ -1826,6 +1886,7 @@ export function PullRequestDetailPanel({
                     detail={detail}
                     selectedCommitOid={selectedCodeCommitOid}
                     onSelectedCommitChange={selectCodeCommit}
+                    onCommitDiffChange={onCommitDiffChange}
                     pendingFinding={handoff}
                     fixFindingLabel={handoffLabels.fixFinding}
                     {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
