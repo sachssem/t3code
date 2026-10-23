@@ -182,6 +182,9 @@ import {
 } from "./threadActionMenu.logic";
 import {
   applySidebarThreadDrop,
+  collapsedShelfThreads,
+  hasUnseenCompletion,
+  resolveThreadLastVisitedAt,
   filterSidebarV2VisibleThreads,
   groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
@@ -453,6 +456,7 @@ function useSidebarThreads(input: {
     inboxReturns.subscribe,
     inboxReturns.getSnapshot,
   );
+  const localVisits = useUiStateStore((store) => store.threadLastVisitedAtById);
   const nowMinute = useNowMinute();
   // Minute-quantized clocks would delay second-precise snooze wakes by up to a minute.
   const snoozeWakeClock = useSnoozeWakeClock(threads);
@@ -521,9 +525,24 @@ function useSidebarThreads(input: {
     }
     return visible.length === settledThreads.length ? settledThreads : visible;
   })();
+  const unreadThreadKeys = new Set(
+    threads
+      .filter((thread) =>
+        hasUnseenCompletion({
+          ...thread,
+          lastVisitedAt: resolveThreadLastVisitedAt(
+            thread.lastVisitedAt,
+            localVisits[threadShellKey(thread)],
+          ),
+        }),
+      )
+      .map(threadShellKey),
+  );
   const renderedSettledThreads = settledShelfExpanded
     ? visibleSettledThreads
-    : routeThreadOnly(visibleSettledThreads, routeRowThreadKey);
+    : collapsedShelfThreads(settledThreads, routeRowThreadKey, (_thread, key) =>
+        unreadThreadKeys.has(key),
+      );
   const visibleSnoozedThreads = snoozedShelfExpanded
     ? snoozedThreads
     : routeThreadOnly(snoozedThreads, routeRowThreadKey);
@@ -600,6 +619,7 @@ function useSidebarThreads(input: {
       const keys = sidebarFolderExpansionKeys(group);
       setProjectExpanded(keys, !resolveProjectExpanded(projectExpandedById, keys));
     },
+    unreadThreadKeys,
     renderedSettledThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
@@ -1331,6 +1351,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     toggleWorkingShelf,
     projectFolders,
     toggleProjectFolder,
+    unreadThreadKeys,
     renderedSettledThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
@@ -2065,6 +2086,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     settledExpanded: settledShelfExpanded,
     settledVisibleCount,
     routeThreadKey: routeRowThreadKey,
+    keepSettledVisible: (key) => unreadThreadKeys.has(key),
     snoozedThreadCount: snoozedThreads.length,
   });
   const draggedThreadKey = dragState?.activeKey;

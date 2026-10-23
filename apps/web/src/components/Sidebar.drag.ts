@@ -97,6 +97,7 @@ export function createSidebarSortingStrategy(input: {
   settledExpanded: boolean;
   settledVisibleCount?: number;
   routeThreadKey?: string | null;
+  keepSettledVisible?: (key: string) => boolean;
   snoozedThreadCount?: number;
   cardHeight?: number;
   slimHeight?: number;
@@ -160,7 +161,9 @@ export function createSidebarSortingStrategy(input: {
     ).filter((key) => key !== active.key || target.section === "settled");
     const visible = input.settledExpanded
       ? settledOrder.slice(0, input.settledVisibleCount ?? settledOrder.length)
-      : [];
+      : settledOrder.filter(
+          (key) => key === input.routeThreadKey || input.keepSettledVisible?.(key) === true,
+        );
     const routeKey = input.routeThreadKey;
     if (routeKey && settledOrder.includes(routeKey) && !visible.includes(routeKey)) {
       visible.push(routeKey);
