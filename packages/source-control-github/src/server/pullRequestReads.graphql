@@ -582,6 +582,8 @@ query PullRequestFilesViewed($owner: String!, $name: String!, $number: Int!, $af
         nodes {
           path
           viewerViewedState
+          additions
+          deletions
         }
       }
     }

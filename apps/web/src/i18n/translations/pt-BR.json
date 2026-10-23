@@ -6507,6 +6507,8 @@
   "d65b870952bbe4f0": "Estas marcações ficam aqui, não no host",
   "bbe7fd0f95de9593": "Não foi possível ler suas marcações",
   "f00ddf6408754b94": "Esta contagem cobre só parte da alteração",
+  "a0ab1dfe2e5a7b92": "Lines left to review in this PR",
+  "005ced90cab77dad": "Lines left to review in this PR, across all commits",
   "a35be3a33a60ada9": "Parte deste diff não foi mostrada",
   "74c7bae34db3147e": "Os comentários de linha são escritos a partir da alteração inteira",
   "4050f873dc790f8f": "Opções do diff",
@@ -6540,6 +6542,7 @@
     }
   ],
   "1c70364624c9ff9d": "Esta alteração tem mais arquivos do que o host informa marcações em uma leitura, então a contagem fica abaixo e algumas caixas abaixo começam vazias.",
+  "3ff81a3f874ebb4b": "left",
   "d01be46a5dda7091": "O host omitiu parte deste diff: um arquivo binário ou uma alteração grande demais para exibir no texto.",
   "0af8911d9ea884e3": "Um comentário fica ancorado na alteração inteira, então mude para Todos os commits para escrever um.",
   "41997756eb5309f0": "Opções do diff",

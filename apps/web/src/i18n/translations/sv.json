@@ -6513,6 +6513,8 @@
   "d65b870952bbe4f0": "De här bockarna sparas här, inte på värden",
   "bbe7fd0f95de9593": "Dina bockar kunde inte läsas",
   "f00ddf6408754b94": "Det här antalet täcker bara en del av ändringen",
+  "a0ab1dfe2e5a7b92": "Lines left to review in this PR",
+  "005ced90cab77dad": "Lines left to review in this PR, across all commits",
   "a35be3a33a60ada9": "En del av den här diffen visades inte",
   "74c7bae34db3147e": "Radkommentarer skrivs utifrån hela ändringen",
   "4050f873dc790f8f": "Diff-alternativ",
@@ -6546,6 +6548,7 @@
     }
   ],
   "1c70364624c9ff9d": "Den här ändringen har fler filer än värden rapporterar bockar för i en läsning, så antalet är för lågt och vissa rutor nedan börjar tomma.",
+  "3ff81a3f874ebb4b": "left",
   "d01be46a5dda7091": "Värden höll inne en del av den här diffen: en binär fil eller en ändring som är för stor för att visas direkt.",
   "0af8911d9ea884e3": "En kommentar är knuten till hela ändringen, så byt till Alla commits för att skriva en.",
   "41997756eb5309f0": "Diff-alternativ",

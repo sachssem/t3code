@@ -6508,6 +6508,8 @@
   "d65b870952bbe4f0": "Ces coches sont conservées ici, pas sur l’hôte",
   "bbe7fd0f95de9593": "Impossible de lire vos coches",
   "f00ddf6408754b94": "Ce décompte ne couvre qu’une partie de la modification",
+  "a0ab1dfe2e5a7b92": "Lines left to review in this PR",
+  "005ced90cab77dad": "Lines left to review in this PR, across all commits",
   "a35be3a33a60ada9": "Une partie de ce diff n’a pas été affichée",
   "74c7bae34db3147e": "Les commentaires de ligne portent sur l’ensemble de la modification",
   "4050f873dc790f8f": "Options du diff",
@@ -6541,6 +6543,7 @@
     }
   ],
   "1c70364624c9ff9d": "Cette modification contient plus de fichiers que l’hôte n’en signale en une lecture ; le décompte est donc incomplet et certaines cases ci-dessous sont vides au départ.",
+  "3ff81a3f874ebb4b": "left",
   "d01be46a5dda7091": "L’hôte n’a pas fourni une partie de ce diff : un fichier binaire, ou une modification trop volumineuse pour être intégrée.",
   "0af8911d9ea884e3": "Un commentaire porte sur l’ensemble de la modification ; passez à Tous les commits pour en rédiger un.",
   "41997756eb5309f0": "Options du diff",

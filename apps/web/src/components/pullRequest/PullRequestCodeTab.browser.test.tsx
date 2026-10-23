@@ -113,6 +113,7 @@ vi.mock(import("./usePullRequestFilesViewed"), async () => {
           deliverViewedPaths(next);
         },
         truncated: false,
+        unreviewedLines: null,
         error: null,
         refresh: () => {},
       };

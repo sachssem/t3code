@@ -6507,6 +6507,8 @@
   "d65b870952bbe4f0": "Diese Häkchen werden hier gespeichert, nicht auf dem Host",
   "bbe7fd0f95de9593": "Deine Häkchen konnten nicht gelesen werden",
   "f00ddf6408754b94": "Diese Zahl umfasst nur einen Teil der Änderung",
+  "a0ab1dfe2e5a7b92": "Noch zu prüfende Zeilen in diesem PR",
+  "005ced90cab77dad": "Noch zu prüfende Zeilen in diesem PR, über alle Commits hinweg",
   "a35be3a33a60ada9": "Ein Teil dieses Diffs wurde nicht angezeigt",
   "74c7bae34db3147e": "Zeilenkommentare werden zur gesamten Änderung geschrieben",
   "4050f873dc790f8f": "Diff-Optionen",
@@ -6540,6 +6542,7 @@
     }
   ],
   "1c70364624c9ff9d": "Diese Änderung hat mehr Dateien, als der Host in einer Abfrage mit Häkchen meldet, daher ist die Zahl zu niedrig und einige Kästchen unten beginnen leer.",
+  "3ff81a3f874ebb4b": "übrig",
   "d01be46a5dda7091": "Der Host hat einen Teil dieses Diffs zurückgehalten: eine Binärdatei oder eine Änderung, die zu groß zum Einbetten ist.",
   "0af8911d9ea884e3": "Ein Kommentar ist an die gesamte Änderung gebunden, wechsle also zu „Alle Commits“, um einen zu schreiben.",
   "41997756eb5309f0": "Diff-Optionen",

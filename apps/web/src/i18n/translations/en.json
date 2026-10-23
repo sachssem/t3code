@@ -6514,6 +6514,8 @@
   "d65b870952bbe4f0": "These ticks are kept here, not on the host",
   "bbe7fd0f95de9593": "Your ticks could not be read",
   "f00ddf6408754b94": "This count covers only part of the change",
+  "a0ab1dfe2e5a7b92": "Lines left to review in this PR",
+  "005ced90cab77dad": "Lines left to review in this PR, across all commits",
   "a35be3a33a60ada9": "Some of this diff was not shown",
   "74c7bae34db3147e": "Line comments are written from the whole change",
   "4050f873dc790f8f": "Diff options",
@@ -6547,6 +6549,7 @@
     }
   ],
   "1c70364624c9ff9d": "This change has more files than the host will report ticks for in one read, so the count is short and some boxes below start empty.",
+  "3ff81a3f874ebb4b": "left",
   "d01be46a5dda7091": "The host withheld part of this diff: a binary file, or a change too large to inline.",
   "0af8911d9ea884e3": "A comment is anchored to the whole change, so switch to All commits to write one.",
   "41997756eb5309f0": "Diff options",

@@ -1872,6 +1872,8 @@ export interface GitHubPullRequestFilesViewedPage {
   readonly files: ReadonlyArray<{
     readonly path: string;
     readonly state: PullRequestFileViewedState;
+    readonly additions: number;
+    readonly deletions: number;
   }>;
   readonly nextCursor: string | null;
 }
@@ -1895,7 +1897,14 @@ export function toPullRequestFilesViewedPage(
     files: nodesOf(files).flatMap((node) =>
       node.path.length === 0
         ? []
-        : [{ path: node.path, state: toFileViewedState(node.viewerViewedState) }],
+        : [
+            {
+              path: node.path,
+              state: toFileViewedState(node.viewerViewedState),
+              additions: node.additions,
+              deletions: node.deletions,
+            },
+          ],
     ),
     nextCursor: nextCursorOf(files?.pageInfo),
   };

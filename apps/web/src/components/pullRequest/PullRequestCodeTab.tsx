@@ -1716,6 +1716,30 @@ function PullRequestCodeTab({
               ) : null}
             </span>
           ) : null}
+          {viewedFilesStore === "host" &&
+          files.length > 0 &&
+          filesViewed.unreviewedLines !== null &&
+          filesViewed.unreviewedLines.additions + filesViewed.unreviewedLines.deletions > 0 ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={<span className="flex shrink-0 items-center gap-1 whitespace-nowrap" />}
+              >
+                <PullRequestDiffStat
+                  additions={filesViewed.unreviewedLines.additions}
+                  deletions={filesViewed.unreviewedLines.deletions}
+                  className="font-mono text-2xs"
+                />
+                <span>
+                  <T>left</T>
+                </span>
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">
+                {commit === null
+                  ? gt("Lines left to review in this PR")
+                  : gt("Lines left to review in this PR, across all commits")}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
           {withheldContent ? (
             <Tooltip>
               <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
