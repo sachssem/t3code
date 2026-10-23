@@ -675,6 +675,8 @@ export type PullRequestFileViewedState = typeof PullRequestFileViewedState.Type;
 export const PullRequestFileViewed = Schema.Struct({
   path: FilePath,
   state: PullRequestFileViewedState,
+  additions: Schema.optional(NonNegativeInt),
+  deletions: Schema.optional(NonNegativeInt),
 });
 export type PullRequestFileViewed = typeof PullRequestFileViewed.Type;
 

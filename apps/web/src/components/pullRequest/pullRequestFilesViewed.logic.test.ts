@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  countUnreviewedLines,
   isFileViewed,
   isStaleViewedState,
   revertFileViewedOverlay,
@@ -108,5 +109,47 @@ describe("revertFileViewedOverlay", () => {
   it("leaves a path a later request took over, even pressed the same way", () => {
     const overlay = new Map([["a.ts", true]]);
     expect(revertFileViewedOverlay(overlay, batch, new Set(["b.ts"]))).toBe(overlay);
+  });
+});
+
+describe("countUnreviewedLines", () => {
+  const result = {
+    files: [
+      { path: "a.ts", state: "viewed" as const, additions: 10, deletions: 1 },
+      { path: "b.ts", state: "unviewed" as const, additions: 5, deletions: 2 },
+      { path: "c.ts", state: "dismissed" as const, additions: 3, deletions: 4 },
+    ],
+    truncated: false,
+  };
+
+  it("counts unviewed files and files pushed to since they were cleared", () => {
+    expect(countUnreviewedLines(result, NO_OVERLAY)).toEqual({ additions: 8, deletions: 6 });
+  });
+
+  it("follows the reader's presses ahead of the host", () => {
+    const overlay = new Map([
+      ["a.ts", false],
+      ["b.ts", true],
+    ]);
+    expect(countUnreviewedLines(result, overlay)).toEqual({ additions: 13, deletions: 5 });
+  });
+
+  it("reaches zero once every file is cleared", () => {
+    const overlay = new Map([
+      ["b.ts", true],
+      ["c.ts", true],
+    ]);
+    expect(countUnreviewedLines(result, overlay)).toEqual({ additions: 0, deletions: 0 });
+  });
+
+  it("says nothing when the host carries no counts or did not list every file", () => {
+    expect(countUnreviewedLines(null, NO_OVERLAY)).toBeNull();
+    expect(countUnreviewedLines({ ...result, truncated: true }, NO_OVERLAY)).toBeNull();
+    expect(
+      countUnreviewedLines(
+        { files: [{ path: "a.ts", state: "unviewed" }], truncated: false },
+        NO_OVERLAY,
+      ),
+    ).toBeNull();
   });
 });

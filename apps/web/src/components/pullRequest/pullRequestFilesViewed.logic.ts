@@ -63,3 +63,20 @@ export function toFileViewedBatch(
 ): ReadonlyArray<{ readonly path: string; readonly viewed: boolean }> {
   return [...overlay].map(([path, viewed]) => ({ path, viewed }));
 }
+
+// Partial counts would report progress the reader has not made.
+export function countUnreviewedLines(
+  result: PullRequestFilesViewedResult | null,
+  overlay: FileViewedOverlay,
+): { readonly additions: number; readonly deletions: number } | null {
+  if (result === null || result.truncated) return null;
+  let additions = 0;
+  let deletions = 0;
+  for (const file of result.files) {
+    if (file.additions === undefined || file.deletions === undefined) return null;
+    if (overlay.get(file.path) ?? isViewedState(file.state)) continue;
+    additions += file.additions;
+    deletions += file.deletions;
+  }
+  return { additions, deletions };
+}

@@ -1631,15 +1631,18 @@ describe("decodePullRequestFilesViewedJson", () => {
 
   it("treats a state it has never heard of as unread rather than failing the page", () => {
     const decoded = decodePullRequestFilesViewedJson(
-      page([{ path: "src/a.ts", viewerViewedState: "SOMETHING_NEW" }], {
-        hasNextPage: false,
-        endCursor: null,
-      }),
+      page(
+        [{ path: "src/a.ts", viewerViewedState: "SOMETHING_NEW", additions: 12, deletions: 3 }],
+        {
+          hasNextPage: false,
+          endCursor: null,
+        },
+      ),
     );
     expect(Result.isSuccess(decoded)).toBe(true);
     if (!Result.isSuccess(decoded)) return;
     expect(decoded.success).toEqual({
-      files: [{ path: "src/a.ts", state: "unviewed" }],
+      files: [{ path: "src/a.ts", state: "unviewed", additions: 12, deletions: 3 }],
       nextCursor: null,
     });
   });
