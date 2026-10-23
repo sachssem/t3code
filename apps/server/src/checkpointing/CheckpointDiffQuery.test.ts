@@ -1,7 +1,14 @@
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
-import { CheckpointRef, CheckpointScopeId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  GitCommandError,
+  CheckpointRef,
+  CheckpointScopeId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -51,10 +58,14 @@ function layerFor(input: {
   readonly projection: Effect.Effect<ProjectionCheckpointContext, OrchestratorProjectionError>;
   readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
   readonly authoredPaths?: ReadonlySet<string>;
+  readonly readGeneratedPaths?: GitVcsDriver.GitVcsDriver["Service"]["readGeneratedPaths"];
 }) {
   return CheckpointDiffQuery.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          readGeneratedPaths: input.readGeneratedPaths ?? (() => Effect.succeed([])),
+        }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getCheckpointContext: () => input.projection,
         }),
@@ -253,23 +264,26 @@ it.effect("shares the turn and full-thread diff budget across real Git batches",
     const patchSizes: number[] = [];
     const query = yield* CheckpointDiffQuery.make.pipe(
       Effect.provide(
-        Layer.mock(ThreadManagement.ThreadManagementService)({
-          getCheckpointContext: () =>
-            Effect.succeed({
-              runs: [{ id: runId, ordinal: 1, status: "completed" }],
-              checkpointScopes: [{ id: scopeId, runId, kind: "root_run", cwd }],
-              checkpoints: [
-                {
-                  scopeId,
-                  runId,
-                  ordinalWithinScope: 1,
-                  appRunOrdinal: 1,
-                  status: "ready",
-                  ref: toCheckpointRef,
-                },
-              ],
-            }),
-        }),
+        Layer.mergeAll(
+          Layer.mock(GitVcsDriver.GitVcsDriver)({ readGeneratedPaths: () => Effect.succeed([]) }),
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getCheckpointContext: () =>
+              Effect.succeed({
+                runs: [{ id: runId, ordinal: 1, status: "completed" }],
+                checkpointScopes: [{ id: scopeId, runId, kind: "root_run", cwd }],
+                checkpoints: [
+                  {
+                    scopeId,
+                    runId,
+                    ordinalWithinScope: 1,
+                    appRunOrdinal: 1,
+                    status: "ready",
+                    ref: toCheckpointRef,
+                  },
+                ],
+              }),
+          }),
+        ),
       ),
       Effect.provideService(CheckpointStore.CheckpointStore, {
         ...store,
@@ -343,3 +357,54 @@ it.effect("preserves an exact-fit filtered patch across batches without a marker
     assert.strictEqual(patchReads, 2);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "attaches generated paths to turn and full-thread diffs without requiring attributes",
+  () => {
+    const patch =
+      "diff --git a/old.js b/new.js\nrename from old.js\nrename to new.js\ndiff --git a/deleted.js b/deleted.js\ndeleted file mode 100644\n";
+    return Effect.gen(function* () {
+      const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const turn = yield* query.getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 2 });
+      const full = yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
+      assert.deepEqual(turn.generatedPaths, ["new.js"]);
+      assert.deepEqual(full.generatedPaths, ["new.js"]);
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          projection: Effect.succeed(makeProjection()),
+          diffCheckpoints: () => Effect.succeed(patch),
+          readGeneratedPaths: (cwd, paths) => {
+            assert.equal(cwd, "/repo");
+            assert.deepEqual(paths, ["new.js", "deleted.js"]);
+            return Effect.succeed(["new.js"]);
+          },
+        }),
+      ),
+    );
+  },
+);
+
+it.effect("keeps checkpoint diffs available when attribute lookup fails", () =>
+  Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const result = yield* query.getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 2 });
+    assert.equal(result.diff, "diff");
+    assert.isUndefined(result.generatedPaths);
+  }).pipe(
+    Effect.provide(
+      layerFor({
+        projection: Effect.succeed(makeProjection()),
+        readGeneratedPaths: () =>
+          Effect.fail(
+            new GitCommandError({
+              operation: "test",
+              command: "git",
+              cwd: "/repo",
+              detail: "unavailable",
+            }),
+          ),
+      }),
+    ),
+  ),
+);

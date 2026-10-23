@@ -1,3 +1,4 @@
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -215,6 +216,7 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
     const layerQuery = CheckpointDiffQuery.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          Layer.mock(GitVcsDriver.GitVcsDriver)({ readGeneratedPaths: () => Effect.succeed([]) }),
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getCheckpointContext: () => Effect.succeed(context),
           }),

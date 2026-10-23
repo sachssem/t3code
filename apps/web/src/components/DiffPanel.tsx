@@ -60,7 +60,11 @@ import {
   resolveFileDiffPath,
 } from "../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
-import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
+import {
+  areAllDiffFilesCollapsed,
+  initialCollapsedDiffFileKeys,
+  toggleAllDiffFiles,
+} from "../lib/diffCollapse";
 import { LIVE_REFRESH_MIN_INTERVAL_MS, useLiveRefresh } from "../hooks/useLiveRefresh";
 import {
   useProject,
@@ -121,8 +125,6 @@ import { useOpenLink } from "../browser/useOpenLink";
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
 const DIFF_FILE_TREE_STORAGE_KEY = "t3code.diffFileTreeOpen";
-
-const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
 function DiffFileCollapseToggle({
   filePath,
@@ -226,6 +228,7 @@ export default function DiffPanel({
   const resolvedTheme = useRenderedAppearance();
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
+    diffCollapseGeneratedFiles: settings.diffCollapseGeneratedFiles,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
     diffLayout: settings.diffLayout,
     timestampFormat: settings.timestampFormat,
@@ -675,9 +678,19 @@ export default function DiffPanel({
   };
   const shownFileEntries = renderableFileEntries.filter(({ fileDiff }) => isFileShown(fileDiff));
   const shownFileKeys = shownFileEntries.map((file) => file.fileKey);
-  const defaultCollapsedDiffFileKeys = settings.diffFilesCollapsed
-    ? new Set(diffFileKeys)
-    : EMPTY_COLLAPSED_DIFF_FILE_KEYS;
+  const defaultCollapsedDiffFileKeys = initialCollapsedDiffFileKeys(
+    renderableFileEntries.map(({ fileKey, fileDiff }) => ({
+      fileKey,
+      path: resolveFileDiffPath(fileDiff),
+    })),
+    {
+      allCollapsed: settings.diffFilesCollapsed,
+      generatedFiles: settings.diffCollapseGeneratedFiles,
+      generatedPaths: new Set(
+        (selectedTurn ? activeCheckpointDiff.data : selectedGitSource)?.generatedPaths ?? [],
+      ),
+    },
+  );
   const storedCollapsedDiffFileKeys = useDiffPanelSessionStore((state) =>
     collapseScopeKey ? state.collapsedFileKeysByScopeKey[collapseScopeKey] : undefined,
   );
