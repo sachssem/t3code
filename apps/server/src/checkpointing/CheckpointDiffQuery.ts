@@ -12,6 +12,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import { parseDiffFilePaths } from "@t3tools/source-control-core/server/diffFileRevisions";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { CHECKPOINT_DIFF_MAX_OUTPUT_BYTES } from "../vcs/VcsDriver.ts";
 import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -71,12 +73,14 @@ function buildTurnDiffResult(
     readonly toTurnCount: number;
   },
   diff: string,
+  generatedPaths: ReadonlyArray<string> = [],
 ): OrchestrationGetTurnDiffResultType {
   return {
     threadId: input.threadId,
     fromTurnCount: input.fromTurnCount,
     toTurnCount: input.toTurnCount,
     diff,
+    ...(generatedPaths.length === 0 ? {} : { generatedPaths }),
   };
 }
 
@@ -85,6 +89,7 @@ export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const crypto = yield* Crypto.Crypto;
+  const git = yield* GitVcsDriver.GitVcsDriver;
 
   const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -252,7 +257,13 @@ export const make = Effect.gen(function* () {
         remainingBytes -= patchBytes;
       }
 
-      const turnDiff = buildTurnDiffResult(input, diff);
+      const paths = parseDiffFilePaths(diff).flatMap(({ oldPath, newPath }) =>
+        (newPath ?? oldPath) ? [newPath ?? oldPath!] : [],
+      );
+      const generatedPaths = yield* git
+        .readGeneratedPaths(toScope.cwd, paths)
+        .pipe(Effect.orElseSucceed(() => []));
+      const turnDiff = buildTurnDiffResult(input, diff, generatedPaths);
       if (!isTurnDiffResult(turnDiff)) {
         return yield* new CheckpointDiffResultInvalidError({
           operation,

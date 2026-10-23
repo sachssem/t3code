@@ -1,4 +1,5 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import { assert, expect, it } from "@effect/vitest";
@@ -253,6 +254,7 @@ const sshAliasHost = {
 
 function makeService(input: {
   readonly settings?: ServerSettings;
+  readonly readGeneratedPaths?: GitVcsDriver.GitVcsDriver["Service"]["readGeneratedPaths"];
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly providers: ReadonlyArray<PullRequestProviderApi>;
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
@@ -263,6 +265,9 @@ function makeService(input: {
   return Effect.flatMap(
     Layer.build(
       Layer.mergeAll(
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          readGeneratedPaths: input.readGeneratedPaths ?? (() => Effect.succeed([])),
+        }),
         Layer.mock(ServerSettingsService.ServerSettingsService)({
           getSettings: Effect.succeed(input.settings ?? DEFAULT_SERVER_SETTINGS),
         }),
@@ -4622,4 +4627,34 @@ it.effect.each(["expiry", "commit expiry", "cache hit", "commit cache hit", "ref
       assert.strictEqual(error.reason, "not-found");
       assert.strictEqual(diffReads, 2);
     }),
+);
+
+it.effect("enriches PR diff slices with generated paths, including withheld files", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getDiff: () =>
+            Effect.succeed({
+              patch: "diff --git a/old.js b/new.js\nrename from old.js\nrename to new.js\n",
+              truncated: true,
+              nextCursor: null,
+              omittedFileStats: [{ path: "withheld.js", additions: 1, deletions: 0 }],
+            }),
+        }),
+      ],
+      readGeneratedPaths: (cwd, paths) => {
+        assert.equal(cwd, "/a");
+        assert.deepEqual(paths, ["new.js", "withheld.js"]);
+        return Effect.succeed(["new.js", "withheld.js"]);
+      },
+    });
+    const result = yield* service.diff({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+    });
+    assert.deepEqual(result.generatedPaths, ["new.js", "withheld.js"]);
+  }),
 );

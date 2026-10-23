@@ -36,6 +36,7 @@ import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
 import {
   makeGitVcsDriverCore,
+  parseGeneratedCheckAttr,
   parseGitCheckoutProgressLine,
   splitNullSeparatedGitStdoutPaths,
   windowsLongPathConfigEnv,
@@ -1879,6 +1880,60 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("review diff previews", () => {
+    it.effect("marks the files .gitattributes calls linguist-generated, in one check-attr", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["checkout", "-b", "feature/generated"]);
+        yield* writeTextFile(
+          cwd,
+          ".gitattributes",
+          "src/paraglide/** linguist-generated\nsrc/paraglide/keep.js -linguist-generated\n",
+        );
+        yield* writeTextFile(cwd, "src/paraglide/messages/en.js", "export const hi = 1;\n");
+        yield* writeTextFile(cwd, "src/paraglide/keep.js", "export {};\n");
+        yield* writeTextFile(cwd, "src/app.ts", "export {};\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "generated output"]);
+        yield* writeTextFile(cwd, "src/paraglide/messages/de.js", "export const hi = 2;\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, baseRef: initialBranch });
+        const branch = preview.sources.find((source) => source.kind === "branch-range")!;
+        const dirty = preview.sources.find((source) => source.kind === "working-tree")!;
+        assert.deepStrictEqual(branch.generatedPaths, [
+          "src/paraglide/messages/de.js",
+          "src/paraglide/messages/en.js",
+        ]);
+        assert.deepStrictEqual(dirty.generatedPaths, ["src/paraglide/messages/de.js"]);
+        const commitSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const selectedCommit = yield* driver.getReviewDiffPreview({ cwd, commitSha });
+        assert.deepStrictEqual(selectedCommit.sources[0]?.generatedPaths, [
+          "src/paraglide/messages/en.js",
+        ]);
+        assert.deepStrictEqual(
+          yield* driver.readGeneratedPaths(cwd, ["src/app.ts", "src/paraglide/keep.js"]),
+          [],
+        );
+      }),
+    );
+
+    it.effect("reads set and true as generated and everything else as not", () =>
+      Effect.sync(() => {
+        const field = (path: string, value: string) => `${path}\0linguist-generated\0${value}\0`;
+        assert.deepStrictEqual(
+          parseGeneratedCheckAttr(
+            field("a.js", "set") +
+              field("b.js", "true") +
+              field("c.js", "unset") +
+              field("d.js", "false") +
+              field("e.js", "unspecified"),
+          ),
+          ["a.js", "b.js"],
+        );
+      }),
+    );
+
     it.effect("diffs a root commit against the empty tree but rejects a shallow boundary", () =>
       Effect.gen(function* () {
         const upstream = yield* makeTmpDir();

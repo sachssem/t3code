@@ -299,6 +299,10 @@ export interface GitRemoteStatusOptions {
 export class GitVcsDriver extends Context.Service<
   GitVcsDriver,
   {
+    readonly readGeneratedPaths: (
+      cwd: string,
+      relativePaths: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyArray<string>, GitCommandError>;
     readonly execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, GitCommandError>;
     readonly status: (input: VcsStatusInput) => Effect.Effect<VcsStatusResult, GitCommandError>;
     readonly statusDetails: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;

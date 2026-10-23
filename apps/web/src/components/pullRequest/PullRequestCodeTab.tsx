@@ -62,7 +62,7 @@ import { usePullRequestScrollMemory } from "./usePullRequestViewMemory";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
-import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
+import { areAllDiffFilesCollapsed, isGeneratedDiffFile } from "~/lib/diffCollapse";
 import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
 import {
   canEditPullRequestComment,
@@ -160,6 +160,7 @@ interface DiffSlice {
   readonly source: PullRequestDiffResult;
   readonly cursor: string | null;
   readonly patch: string;
+  readonly generatedPaths: ReadonlyArray<string>;
   readonly truncated: boolean;
   readonly nextCursor: string | null;
   readonly omittedFileStats: ReadonlyArray<PullRequestOmittedFileStat>;
@@ -343,6 +344,7 @@ function PullRequestCodeTab({
   useDiffWorkerPool();
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
+    diffCollapseGeneratedFiles: settings.diffCollapseGeneratedFiles,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
@@ -439,6 +441,7 @@ function PullRequestCodeTab({
         source: data,
         cursor,
         patch: data.patch,
+        generatedPaths: data.generatedPaths ?? [],
         truncated: data.truncated,
         nextCursor: data.nextCursor,
         omittedFileStats: data.omittedFileStats ?? [],
@@ -452,6 +455,7 @@ function PullRequestCodeTab({
       if (
         existing !== undefined &&
         existing.patch === next.patch &&
+        existing.generatedPaths.join("\0") === next.generatedPaths.join("\0") &&
         existing.truncated === next.truncated &&
         existing.nextCursor === next.nextCursor &&
         sameFileStats(existing.fileStats, next.fileStats) &&
@@ -562,6 +566,7 @@ function PullRequestCodeTab({
             slices: pages.map((page) => ({
               cursor: page.cursor,
               patch: page.patch,
+              generatedPaths: page.generatedPaths ?? [],
               truncated: page.truncated,
               nextCursor: page.nextCursor,
               source: page,
@@ -782,9 +787,15 @@ function PullRequestCodeTab({
       </div>
     );
 
+  const generatedPaths = new Set(loadedSlices.flatMap((slice) => slice.generatedPaths));
+  const foldOverrideFor = (path: string): "expanded" | "folded" =>
+    foldOverride ??
+    (settings.diffCollapseGeneratedFiles && isGeneratedDiffFile(path, generatedPaths)
+      ? "folded"
+      : effectiveFoldOverride);
   const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
     ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
-      const collapsed = isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles);
+      const collapsed = isFileDiffCollapsed(fileKey, foldOverrideFor(path), toggledFiles);
       const viewedMark = filesViewedEnabled
         ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
         : "";
@@ -848,7 +859,7 @@ function PullRequestCodeTab({
     setToggledFiles((current) =>
       range.reduce(
         (next, file) =>
-          toggleFileDiffFoldForViewed(file.fileKey, viewed, effectiveFoldOverride, next),
+          toggleFileDiffFoldForViewed(file.fileKey, viewed, foldOverrideFor(file.path), next),
         current,
       ),
     );
@@ -905,7 +916,12 @@ function PullRequestCodeTab({
     // Unfold only: a second reveal before the unfold renders must not fold the file again.
     if (item.collapsed === true) {
       setToggledFiles((current) =>
-        toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
+        toggleFileDiffFoldForViewed(
+          item.id,
+          false,
+          foldOverrideFor(resolveFileDiffPath(item.fileDiff)),
+          current,
+        ),
       );
     }
     codeViewReveal.request(item.id);
@@ -1814,7 +1830,12 @@ function PullRequestCodeTab({
               // Find may repeat requests before render; only unfold, never toggle.
               onRevealSearchMatch={(item) =>
                 setToggledFiles((current) =>
-                  toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
+                  toggleFileDiffFoldForViewed(
+                    item.id,
+                    false,
+                    foldOverrideFor(item.type === "diff" ? resolveFileDiffPath(item.fileDiff) : ""),
+                    current,
+                  ),
                 )
               }
               unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}

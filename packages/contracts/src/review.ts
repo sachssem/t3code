@@ -59,6 +59,7 @@ export const ReviewDiffPreviewSource = Schema.Struct({
   baseRef: Schema.NullOr(TrimmedNonEmptyString),
   headRef: Schema.NullOr(TrimmedNonEmptyString),
   diff: Schema.String,
+  generatedPaths: Schema.optionalKey(Schema.Array(Schema.String)),
   diffHash: TrimmedNonEmptyString,
   truncated: Schema.Boolean,
   files: Schema.optionalKey(Schema.Array(ReviewDiffFileStat)),

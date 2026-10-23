@@ -368,6 +368,7 @@ const layerRepositoryIdentityResolver = Layer.effect(
 ).pipe(Layer.provide(layerSourceControlProviderRegistry), Layer.provide(ProcessRunner.layer));
 
 const layerPullRequestService = PullRequestService.layer.pipe(
+  Layer.provide(GitVcsDriver.layer),
   Layer.provide(PullRequestProviderRegistry.layer),
   Layer.provide(PullRequestFilesViewed.layer),
   Layer.provide(PullRequestReadCache.layer),
@@ -533,6 +534,7 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
 );
 
 const layerOrchestrationApplication = CheckpointDiffQuery.layer.pipe(
+  Layer.provide(GitVcsDriver.layer),
   Layer.provideMerge(layerCheckpointStore),
   Layer.provideMerge(layerOrchestrationV2Runtime),
 );
