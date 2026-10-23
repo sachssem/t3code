@@ -1,4 +1,5 @@
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { parseDiffFilePaths } from "@t3tools/source-control-core/server/diffFileRevisions";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -716,6 +717,7 @@ export const make = Effect.gen(function* () {
   const filesViewedStore = yield* PullRequestFilesViewed.PullRequestFilesViewedRepository;
   const readCache = yield* PullRequestReadCache.PullRequestReadCache;
   const clock = yield* Clock.Clock;
+  const git = yield* GitVcsDriver.GitVcsDriver;
 
   /**
    * Where each project's remote is served from, by the remote's recognised base URL: a remote no
@@ -1904,6 +1906,23 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const withGeneratedPaths = Effect.fn("PullRequestService.withGeneratedPaths")(function* (
+    cwd: string,
+    result: PullRequestDiffResult,
+  ) {
+    const paths = [
+      ...parseDiffFilePaths(result.patch).flatMap(({ oldPath, newPath }) =>
+        (newPath ?? oldPath) ? [newPath ?? oldPath!] : [],
+      ),
+      ...(result.fileStats ?? []).map((file) => file.path),
+      ...(result.omittedFileStats ?? []).map((file) => file.path),
+    ];
+    const generatedPaths = yield* git
+      .readGeneratedPaths(cwd, paths)
+      .pipe(Effect.orElseSucceed(() => []));
+    return generatedPaths.length === 0 ? result : { ...result, generatedPaths };
+  });
+
   const diffUncached: PullRequestService["Service"]["diff"] = (input) =>
     requireProject(input).pipe(
       Effect.flatMap((project) =>
@@ -1917,7 +1936,12 @@ export const make = Effect.gen(function* () {
                 ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
                 ...(input.commit === undefined ? {} : { commit: input.commit }),
               })
-              .pipe(Effect.mapError(toPullRequestError("diff")))
+              .pipe(
+                Effect.mapError(toPullRequestError("diff")),
+                Effect.flatMap((result) =>
+                  withGeneratedPaths(project.project.workspaceRoot, result),
+                ),
+              )
           : Effect.fail(
               new PullRequestOperationError({
                 operation: "diff",

@@ -641,6 +641,7 @@ export type PullRequestOmittedFileStat = typeof PullRequestOmittedFileStat.Type;
 
 export const PullRequestDiffResult = Schema.Struct({
   patch: Schema.String,
+  generatedPaths: Schema.optionalKey(Schema.Array(Schema.String)),
   /** Content omitted within this slice; nextCursor separately indicates more slices. */
   truncated: Schema.Boolean,
   nextCursor: Schema.NullOr(TrimmedNonEmptyString),

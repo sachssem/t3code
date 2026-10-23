@@ -338,6 +338,21 @@ const refuseOptionLikeRefName = (operation: string, cwd: string, refName: string
       )
     : Effect.void;
 
+/**
+ * The paths `git check-attr -z linguist-generated` reports as generated. Its output is
+ * `<path>\0<attribute>\0<value>\0` per path; `set` and `true` mean generated, the way GitHub reads
+ * the attribute, and `unset`, `false` or `unspecified` mean it is not.
+ */
+export function parseGeneratedCheckAttr(stdout: string): string[] {
+  const fields = stdout.split("\0");
+  const generated: string[] = [];
+  for (let at = 0; at + 2 < fields.length; at += 3) {
+    const value = fields[at + 2];
+    if (value === "set" || value === "true") generated.push(fields[at]!);
+  }
+  return generated;
+}
+
 function sanitizeRemoteName(value: string): string {
   const sanitized = value
     .trim()
@@ -1534,6 +1549,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const cacheKey = normalizeRepositoryPathsCacheKey(cwd);
     return Cache.get(refresh ? repositoryPathsRefreshCache : repositoryPathsCache, cacheKey);
   };
+
+  const readGeneratedPaths: GitVcsDriver.GitVcsDriver["Service"]["readGeneratedPaths"] = Effect.fn(
+    "GitVcsDriver.readGeneratedPaths",
+  )(function* (cwd, relativePaths) {
+    const unique = [...new Set(relativePaths)];
+    if (unique.length === 0) return [];
+    const root = (yield* resolveRepositoryPaths(cwd))?.worktreeRoot;
+    if (!root) return [];
+    // Read in one batch so nested attributes and local overrides apply without a stale cache.
+    const stdin = `${unique.join("\0")}\0`;
+    const result = yield* executeGit(
+      "GitVcsDriver.readGeneratedPaths",
+      root,
+      ["check-attr", "-z", "--stdin", "linguist-generated"],
+      { stdin, timeoutMs: 20_000, maxOutputBytes: Buffer.byteLength(stdin) + unique.length * 64 },
+    );
+    return parseGeneratedCheckAttr(result.stdout);
+  });
 
   const defaultBranchCache = yield* Cache.makeWith(
     (gitCommonDir: string) =>
@@ -3470,6 +3503,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { maxOutputBytes: patchLimit, appendTruncationMarker: true },
       );
       const diffHash = yield* hashDiff(patch.stdout, files);
+      const generatedPaths = yield* readGeneratedPaths(
+        cwd,
+        files.map((file) => file.path),
+      ).pipe(Effect.orElseSucceed(() => []));
       return {
         cwd: input.cwd,
         generatedAt: yield* DateTime.now,
@@ -3483,6 +3520,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             headRef: commit.sha,
             diff: patch.stdout,
             files,
+            ...(generatedPaths.length === 0 ? {} : { generatedPaths }),
             diffHash,
             truncated: patch.stdoutTruncated,
           },
@@ -3574,6 +3612,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       hashDiff(baseDiff, baseFiles ?? []),
     ]);
 
+    const generated = new Set(
+      yield* readGeneratedPaths(
+        cwd,
+        [...(dirtyFiles ?? []), ...(baseFiles ?? [])].map((file) => file.path),
+      ).pipe(Effect.orElseSucceed(() => [])),
+    );
+    const generatedPathsOf = (files: ReadonlyArray<ReviewDiffFileStat> | undefined) => {
+      const paths = (files ?? []).flatMap((file) => (generated.has(file.path) ? [file.path] : []));
+      return paths.length === 0 ? {} : { generatedPaths: paths };
+    };
     const sources: ReviewDiffPreviewSource[] = [
       {
         id: "working-tree",
@@ -3583,6 +3631,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         headRef: null,
         diff: dirtyDiff,
         ...(dirtyFiles === undefined ? {} : { files: dirtyFiles }),
+        ...generatedPathsOf(dirtyFiles),
         diffHash: dirtyDiffHash,
         truncated: dirtyTrackedResult.stdoutTruncated,
       },
@@ -3594,6 +3643,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         headRef: repository.currentBranch ?? "HEAD",
         diff: baseDiff,
         ...(baseFiles === undefined ? {} : { files: baseFiles }),
+        ...generatedPathsOf(baseFiles),
         diffHash: baseDiffHash,
         truncated: baseResult.stdoutTruncated,
       },
@@ -5058,6 +5108,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     readRangeContext,
     getReviewBranchCommits,
     getReviewDiffPreview,
+    readGeneratedPaths,
     getReviewDiffFileContents,
     readConfigValue,
     readBranchBase,
