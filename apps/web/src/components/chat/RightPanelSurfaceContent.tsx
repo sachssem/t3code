@@ -20,6 +20,7 @@ import {
   type PersistentThreadTerminalPanelProps,
 } from "../PersistentThreadTerminals";
 import { pullRequestPanelContext } from "../pullRequest/pullRequestDetail.logic";
+import { usePullRequestViewMemory } from "../pullRequest/usePullRequestViewMemory";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
@@ -80,6 +81,7 @@ export function RightPanelSurfaceContent(props: {
   readonly sideChatParentPanel: SideChatParentPanel;
 }) {
   const { surface, threadRef, visible } = props;
+  const viewMemory = usePullRequestViewMemory(threadRef, surface?.id);
   if (surface === null) return null;
   switch (surface.kind) {
     case "preview":
@@ -149,6 +151,7 @@ export function RightPanelSurfaceContent(props: {
             number: surface.number,
           }}
           initialTab={surface.detailTab ?? "summary"}
+          viewMemory={viewMemory}
           onTabChange={(tab) => {
             useRightPanelStore.getState().setPullRequestDetailTab(threadRef, surface.id, tab);
           }}

@@ -2,6 +2,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
+import { getPullRequestViewMemory } from "./components/pullRequest/usePullRequestViewMemory";
 import { useClosedViewStore } from "./closedViewStore";
 import { reopenClosedView } from "./reopenClosedView";
 import {
@@ -1064,6 +1065,76 @@ describe("rightPanelStore", () => {
         ref,
       );
       expect(reopened?.kind === "pull-request" && (reopened.detailTab ?? "summary")).toBe(tab);
+    }
+  });
+
+  it("restores commit and per-scope scroll memory per thread and panel after reload and reopen", async () => {
+    const pr = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
+    const otherPr = { ...pr, number: 4910 };
+    const otherEnvironment = scopeThreadRef("env-2" as EnvironmentId, refA.threadId);
+    const all = { itemId: "a.ts", offset: 100, scrollTop: 900 };
+    const commit = { itemId: "deep.ts", offset: 250, scrollTop: 12000 };
+    const selections = [
+      [refA, pr],
+      [refB, pr],
+      [otherEnvironment, pr],
+      [refA, otherPr],
+    ] as const;
+    const store = useRightPanelStore.getState();
+    for (const [index, [ref, reference]] of selections.entries()) {
+      store.openPullRequest(ref, reference);
+      const id = pullRequestSurfaceId(reference);
+      getPullRequestViewMemory(ref, id).update({ commitOid: `commit-${index}`, code: { all } });
+      const surfaces = selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        ref,
+      ).surfaces;
+      getPullRequestViewMemory(ref, id).update({
+        code: { [`commit-${index}`]: commit },
+        scrollTops: { summary: index * 50 },
+      });
+      getPullRequestViewMemory(ref, id).update({ scrollTops: { timeline: index * 20 } });
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).surfaces,
+      ).toBe(surfaces);
+    }
+    await reloadRightPanelStore();
+    for (const [index, [ref, reference]] of selections.entries()) {
+      const id = pullRequestSurfaceId(reference);
+      store.openPullRequest(ref, {
+        ...reference,
+        url: `https://github.com/${reference.repository}/pull/${reference.number}`,
+      });
+      const active = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref);
+      const expected = {
+        commitOid: `commit-${index}`,
+        code: { all, [`commit-${index}`]: commit },
+        scrollTops: { summary: index * 50, timeline: index * 20 },
+      };
+      expect(active?.kind).toBe("pull-request");
+      expect(getPullRequestViewMemory(ref, id).read()).toEqual(expected);
+      store.closeSurface(ref, id);
+      // A late scroll flush from an unmount must not recreate a closed panel.
+      getPullRequestViewMemory(ref, id).update({ commitOid: "late" });
+      await reopenClosedView(useClosedViewStore.getState().entries[0]!, {
+        workspaceAvailable: true,
+        openPreview: () => {
+          throw new Error("Unexpected browser session");
+        },
+      });
+      const reopened = selectActiveRightPanelSurface(
+        useRightPanelStore.getState().byThreadKey,
+        ref,
+      );
+      expect(reopened?.kind).toBe("pull-request");
+      expect(getPullRequestViewMemory(ref, id).read()).toEqual(expected);
+      getPullRequestViewMemory(ref, id).update({ commitOid: null });
+      const cleared = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref);
+      expect(cleared?.kind).toBe("pull-request");
+      expect(getPullRequestViewMemory(ref, id).read()).toEqual({
+        ...expected,
+        commitOid: null,
+      });
     }
   });
 
