@@ -87,6 +87,7 @@ vi.mock(import("./usePullRequestFilesViewed"), async () => {
         isStale: () => false,
         setViewed: () => {},
         truncated: false,
+        unreviewedLines: null,
         error: null,
         refresh: () => {},
       };

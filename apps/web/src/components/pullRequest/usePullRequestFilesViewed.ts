@@ -6,6 +6,7 @@ import { useEnvironmentQuery } from "~/state/query";
 
 import { filesViewedScope } from "./filesViewedStore";
 import {
+  countUnreviewedLines,
   isFileViewed,
   isStaleViewedState,
   toFileViewedStates,
@@ -16,6 +17,7 @@ export interface PullRequestFilesViewedView {
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
   readonly setViewed: (path: string, viewed: boolean) => void;
+  readonly unreviewedLines: { readonly additions: number; readonly deletions: number } | null;
   readonly truncated: boolean;
   readonly error: string | null;
   readonly refresh: () => void;
@@ -51,5 +53,6 @@ export function usePullRequestFilesViewed(options: {
     truncated: query.data?.truncated === true,
     error: query.error,
     refresh: query.refresh,
+    unreviewedLines: countUnreviewedLines(query.data, overlay),
   };
 }
