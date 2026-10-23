@@ -1290,65 +1290,76 @@ function PullRequestCodeTab({
   };
   const toolbar = (
     <div className="@container flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-3 whitespace-nowrap @max-[26rem]:gap-2">
         {orderedCommits.length > 0 || commit !== null ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={<Button size="xs" variant="secondary" />}
-              className="min-w-0 max-w-64"
-              aria-label={`Diff scope: ${scopeLabel}`}
-            >
-              <span className="truncate">{scopeLabel}</span>
-              <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="max-w-[min(28rem,calc(100vw-2rem))]">
-              <DropdownMenuRadioGroup
-                value={commit ?? "all"}
-                onValueChange={(value) => onSelectedCommitChange(value === "all" ? null : value)}
+          <div className="flex min-w-0 max-w-64 shrink">
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={<Button size="xs" variant="secondary" />}
+                className="min-w-0 max-w-full"
+                aria-label={`Diff scope: ${scopeLabel}`}
               >
-                <DropdownMenuRadioItem value="all" closeOnClick>
-                  <span>All commits</span>
-                </DropdownMenuRadioItem>
-                {orderedCommits.slice(0, visibleCommitCount).map((entry) => (
-                  <DropdownMenuRadioItem key={entry.oid} value={entry.oid} closeOnClick>
-                    <span className="flex items-center gap-2">
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={<span className="min-w-0 truncate">{entry.messageHeadline}</span>}
-                        />
-                        <TooltipPopup side="top">{entry.messageHeadline}</TooltipPopup>
-                      </Tooltip>
-                      <span className="ml-auto flex shrink-0 items-center gap-2">
-                        {entry.additions !== undefined && entry.deletions !== undefined ? (
-                          <PullRequestDiffStat
-                            additions={entry.additions}
-                            deletions={entry.deletions}
-                            className="font-mono text-2xs"
+                <span className="truncate">{scopeLabel}</span>
+                <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="max-w-[min(28rem,calc(100vw-2rem))]">
+                <DropdownMenuRadioGroup
+                  value={commit ?? "all"}
+                  onValueChange={(value) => onSelectedCommitChange(value === "all" ? null : value)}
+                >
+                  <DropdownMenuRadioItem value="all" closeOnClick>
+                    <span>All commits</span>
+                  </DropdownMenuRadioItem>
+                  {orderedCommits.slice(0, visibleCommitCount).map((entry) => (
+                    <DropdownMenuRadioItem key={entry.oid} value={entry.oid} closeOnClick>
+                      <span className="flex items-center gap-2">
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <span className="min-w-0 truncate">{entry.messageHeadline}</span>
+                            }
                           />
-                        ) : null}
-                        <span className="font-mono text-xs text-muted-foreground">
-                          {entry.oid.slice(0, 7)}
+                          <TooltipPopup side="top">{entry.messageHeadline}</TooltipPopup>
+                        </Tooltip>
+                        <span className="ml-auto flex shrink-0 items-center gap-2">
+                          {entry.additions !== undefined && entry.deletions !== undefined ? (
+                            <PullRequestDiffStat
+                              additions={entry.additions}
+                              deletions={entry.deletions}
+                              className="font-mono text-2xs"
+                            />
+                          ) : null}
+                          <span className="font-mono text-xs text-muted-foreground">
+                            {entry.oid.slice(0, 7)}
+                          </span>
                         </span>
                       </span>
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+                {orderedCommits.length > visibleCommitCount ? (
+                  <DropdownMenuItem
+                    closeOnClick={false}
+                    onClick={() => setVisibleCommitCount((count) => count + COMMIT_PAGE_SIZE)}
+                  >
+                    <span className="text-muted-foreground">
+                      Show more ({orderedCommits.length - visibleCommitCount} left)
                     </span>
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-              {orderedCommits.length > visibleCommitCount ? (
-                <DropdownMenuItem
-                  closeOnClick={false}
-                  onClick={() => setVisibleCommitCount((count) => count + COMMIT_PAGE_SIZE)}
-                >
-                  <span className="text-muted-foreground">
-                    Show more ({orderedCommits.length - visibleCommitCount} left)
-                  </span>
-                </DropdownMenuItem>
-              ) : null}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  </DropdownMenuItem>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         ) : null}
-        <PullRequestMetaLine>
-          <span className="shrink-0 tabular-nums">
+        <PullRequestMetaLine className="shrink-0">
+          <span
+            className={cn(
+              "shrink-0 tabular-nums",
+              filesViewed.enabled &&
+                files.length > 0 &&
+                "@max-[26rem]:hidden @max-[26rem]:[&+*]:hidden",
+            )}
+          >
             {files.length} {files.length === 1 ? "file" : "files"}
             {nextCursor === null ? "" : "+"}
           </span>
@@ -1362,7 +1373,7 @@ function PullRequestCodeTab({
               <span className="shrink-0">
                 {filePaths.filter(isFileViewed).length} / {files.length}
               </span>
-              <span className="truncate">
+              <span className="truncate @max-[30rem]:hidden">
                 {viewedFilesStore === "environment" ? `viewed in ${APP_BASE_NAME}` : "viewed"}
               </span>
               {viewedFilesStore === "environment" ? (
@@ -1423,7 +1434,7 @@ function PullRequestCodeTab({
                   deletions={filesViewed.unreviewedLines.deletions}
                   className="font-mono text-2xs"
                 />
-                <span>left</span>
+                <span className="@max-[40rem]:hidden">left</span>
               </TooltipTrigger>
               <TooltipPopup side="bottom">
                 {commit === null
