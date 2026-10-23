@@ -399,6 +399,7 @@ export interface GitHubPullRequestDiffSlice {
   readonly truncated: boolean;
   readonly nextCursor: string | null;
   readonly omittedFileStats?: ReadonlyArray<PullRequestOmittedFileStat>;
+  readonly fileStats?: ReadonlyArray<PullRequestOmittedFileStat>;
 }
 
 export interface GitHubPullRequestFilesViewed {
@@ -1278,6 +1279,9 @@ export const make = Effect.gen(function* () {
             patch: files.patch,
             truncated: files.truncated,
             nextCursor: morePages ? String(input.page + 1) : null,
+            ...(input.commit !== undefined && files.fileStats !== undefined
+              ? { fileStats: files.fileStats }
+              : {}),
             ...(files.omittedFileStats.length === 0
               ? {}
               : { omittedFileStats: files.omittedFileStats }),
