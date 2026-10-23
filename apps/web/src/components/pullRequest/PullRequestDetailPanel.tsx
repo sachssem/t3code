@@ -48,6 +48,7 @@ import {
   useState,
 } from "react";
 
+import { resolveCodeCommit, type PullRequestViewMemory } from "./pullRequestViewMemory.logic";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { type PullRequestDetailTab, useRightPanelStore } from "~/rightPanelStore";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -111,6 +112,7 @@ import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavai
 import { SourceControlAppAccessNotice } from "../SourceControlAppAccessNotice";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
+import { usePullRequestScrollMemory } from "./usePullRequestViewMemory";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
@@ -324,6 +326,7 @@ export function PullRequestDetailPanel({
   onRevealSettled,
   initialTab = "summary",
   onTabChange,
+  viewMemory,
 }: {
   environmentId: EnvironmentId;
   shortcutsEnabled: boolean;
@@ -352,6 +355,7 @@ export function PullRequestDetailPanel({
   revealUrl?: string | undefined;
   /** Reports the link it was given shown or missing, so a newer link stays pending. */
   onRevealSettled?: ((revealUrl: string) => void) | undefined;
+  viewMemory?: PullRequestViewMemory | undefined;
   initialTab?: PullRequestDetailTab;
   onTabChange?: ((tab: PullRequestDetailTab) => void) | undefined;
 }) {
@@ -437,9 +441,14 @@ export function PullRequestDetailPanel({
   const [codeCommitScope, setCodeCommitScope] = useState<{
     readonly pullRequestKey: string;
     readonly oid: string | null;
-  }>(() => ({ pullRequestKey, oid: pullRequestLinkCommit(revealUrl) }));
-  const selectedCodeCommitOid =
-    codeCommitScope.pullRequestKey === pullRequestKey ? codeCommitScope.oid : null;
+  }>(() => ({
+    pullRequestKey,
+    // A clicked link names its own commit scope; otherwise reopen the one left.
+    oid:
+      revealUrl === undefined
+        ? (viewMemory?.read()?.commitOid ?? null)
+        : pullRequestLinkCommit(revealUrl),
+  }));
   const codeDiffScopeKey = `${environmentId}:${pullRequestKey}`;
   const [codeDiffPages, setCodeDiffPages] = useState<{
     readonly scopeKey: string;
@@ -456,6 +465,7 @@ export function PullRequestDetailPanel({
   );
   const selectCodeCommit = (oid: string | null) => {
     setCodeCommitScope({ pullRequestKey, oid });
+    viewMemory?.update({ commitOid: oid });
   };
   const openCommit = (oid: string) => {
     selectCodeCommit(oid);
@@ -529,6 +539,35 @@ export function PullRequestDetailPanel({
       scrollerByTab.current.code = node;
     },
   }));
+  const scrollWriter = usePullRequestScrollMemory(viewMemory, tabScopeKey);
+  const restoringTabs = useRef(new Set<PullRequestDetailTab>());
+  const restoredTabs = useRef(new Set<PullRequestDetailTab>());
+  const tabScrollRestores = useRef<Partial<Record<PullRequestDetailTab, number>>>({});
+  const setCodeScrollRestoring = useStableCallback((restoring: boolean) => {
+    if (restoring) restoringTabs.current.add("code");
+    else restoringTabs.current.delete("code");
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the mounted tab DOM scroller after lazy content arrives
+  useLayoutEffect(() => {
+    if (!restoredTabs.current.has(tab)) {
+      restoredTabs.current.add(tab);
+      const top =
+        tab === "summary" || tab === "timeline" ? viewMemory?.read()?.scrollTops?.[tab] : undefined;
+      if (top !== undefined && top > 0) {
+        tabScrollRestores.current[tab] = top;
+        restoringTabs.current.add(tab);
+      }
+    }
+    const top = tabScrollRestores.current[tab];
+    const scroller = scrollerByTab.current[tab];
+    if (top === undefined || !scroller) return;
+    scroller.scrollTop = top;
+    if (Math.abs(scroller.scrollTop - top) <= 1) delete tabScrollRestores.current[tab];
+  });
+  const endScrollRestore = () => {
+    restoringTabs.current.delete(tab);
+    delete tabScrollRestores.current[tab];
+  };
   const foldRef = useRef<HTMLDivElement | null>(null);
   const condensedRowRef = useRef<HTMLDivElement | null>(null);
   // Save the target before collapse: the browser may clamp scrollTop as the viewport grows,
@@ -567,6 +606,10 @@ export function PullRequestDetailPanel({
   };
   const [handoff, setHandoff] = useState<string | null>(null);
   const turnRefresh = usePullRequestTurnRefresh(environmentId);
+  const selectedCodeCommitOid = resolveCodeCommit(
+    codeCommitScope.pullRequestKey === pullRequestKey ? codeCommitScope.oid : null,
+    activity?.commits,
+  );
   const handoffSummary = detail ?? sharedSummary;
   const terminology = sourceControlClients.get(
     handoffSummary?.provider ?? listEntry?.provider ?? repositoryIdentity?.provider,
@@ -1879,10 +1922,19 @@ export function PullRequestDetailPanel({
       />
       <div
         className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+        onWheelCapture={endScrollRestore}
+        onPointerDownCapture={endScrollRestore}
+        onKeyDownCapture={endScrollRestore}
+        onTouchStartCapture={endScrollRestore}
         onScrollCapture={(event) => {
           const scroller = scrollerByTab.current[tab];
           if (event.target !== scroller || scroller === null || scroller === undefined) return;
           const top = scroller.scrollTop;
+          const restoring = restoringTabs.current.has(tab);
+          if (!restoring && (tab === "summary" || tab === "timeline")) {
+            scrollWriter.schedule({ scrollTops: { [tab]: top } });
+          }
+          // Decided here, not in a state updater, which React may run during render.
           const previous = condensedByTab[tab] ?? false;
           const foldHeight = foldRef.current?.scrollHeight ?? 0;
           let next = previous;
@@ -1890,7 +1942,8 @@ export function PullRequestDetailPanel({
             if (top < 4 && foldHeight > 0) next = false;
           } else if (foldHeight > 0 && top > foldHeight + 32) {
             const chromeDelta = foldHeight - (condensedRowRef.current?.scrollHeight ?? 0);
-            compensationRef.current = { tab, scroller, target: top - chromeDelta };
+            // Restored offsets already include the collapsed header's height.
+            if (!restoring) compensationRef.current = { tab, scroller, target: top - chromeDelta };
             next = true;
           }
           if (next !== previous) setCondensedByTab({ ...condensedByTab, [tab]: next });
@@ -2010,7 +2063,10 @@ export function PullRequestDetailPanel({
                   }
                 >
                   <PullRequestCodeTab
+                    commitsLoaded={activity !== null}
                     scrollerRef={scrollerRefs.code}
+                    viewMemory={viewMemory}
+                    onScrollRestoreChange={setCodeScrollRestoring}
                     onAddToAgentSelection={addSelectionToAgent}
                     environmentId={environmentId}
                     reference={reference}
