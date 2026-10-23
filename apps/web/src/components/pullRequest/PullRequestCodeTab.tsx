@@ -68,7 +68,7 @@ import { usePullRequestScrollMemory } from "./usePullRequestViewMemory";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
-import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
+import { areAllDiffFilesCollapsed, isGeneratedDiffFile } from "~/lib/diffCollapse";
 import {
   pullRequestFindingKey,
   type PullRequestChatSubject,
@@ -172,6 +172,7 @@ interface DiffSlice {
   readonly source: PullRequestDiffResult;
   readonly cursor: string | null;
   readonly patch: string;
+  readonly generatedPaths: ReadonlyArray<string>;
   readonly truncated: boolean;
   readonly nextCursor: string | null;
   readonly omittedFileStats: ReadonlyArray<PullRequestOmittedFileStat>;
@@ -433,6 +434,7 @@ function PullRequestCodeTab({
   useDiffWorkerPool();
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
+    diffCollapseGeneratedFiles: settings.diffCollapseGeneratedFiles,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
@@ -529,6 +531,7 @@ function PullRequestCodeTab({
         source: data,
         cursor,
         patch: data.patch,
+        generatedPaths: data.generatedPaths ?? [],
         truncated: data.truncated,
         nextCursor: data.nextCursor,
         omittedFileStats: data.omittedFileStats ?? [],
@@ -542,6 +545,7 @@ function PullRequestCodeTab({
       if (
         existing !== undefined &&
         existing.patch === next.patch &&
+        existing.generatedPaths.join("\0") === next.generatedPaths.join("\0") &&
         existing.truncated === next.truncated &&
         existing.nextCursor === next.nextCursor &&
         sameFileStats(existing.fileStats, next.fileStats) &&
@@ -652,6 +656,7 @@ function PullRequestCodeTab({
             slices: pages.map((page) => ({
               cursor: page.cursor,
               patch: page.patch,
+              generatedPaths: page.generatedPaths ?? [],
               truncated: page.truncated,
               nextCursor: page.nextCursor,
               source: page,
@@ -859,6 +864,12 @@ function PullRequestCodeTab({
       </div>
     );
 
+  const generatedPaths = new Set(loadedSlices.flatMap((slice) => slice.generatedPaths));
+  const foldOverrideFor = (path: string): "expanded" | "folded" =>
+    foldOverride ??
+    (settings.diffCollapseGeneratedFiles && isGeneratedDiffFile(path, generatedPaths)
+      ? "folded"
+      : effectiveFoldOverride);
   // A stale mark means the file changed since it was viewed; Fold all and Expand all outrank marks.
   const foldsAsViewed = (path: string) =>
     foldOverride === null && filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
@@ -866,7 +877,7 @@ function PullRequestCodeTab({
     ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
       const collapsed = isFileDiffCollapsed(
         fileKey,
-        effectiveFoldOverride,
+        foldOverrideFor(path),
         foldChoices,
         foldsAsViewed(path),
       );
@@ -917,12 +928,9 @@ function PullRequestCodeTab({
   const toggleFile = (fileKey: string) => {
     const path = annotatedFiles.find((file) => file.fileKey === fileKey)?.path;
     const viewed = path !== undefined && foldsAsViewed(path);
+    const override = path === undefined ? effectiveFoldOverride : foldOverrideFor(path);
     setFoldChoices((current) =>
-      withFileDiffFold(
-        current,
-        fileKey,
-        !isFileDiffCollapsed(fileKey, effectiveFoldOverride, current, viewed),
-      ),
+      withFileDiffFold(current, fileKey, !isFileDiffCollapsed(fileKey, override, current, viewed)),
     );
   };
 

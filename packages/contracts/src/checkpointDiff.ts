@@ -22,6 +22,7 @@ export const ThreadTurnDiff = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
     diff: Schema.String,
+    generatedPaths: Schema.optionalKey(Schema.Array(Schema.String)),
   }),
   { unsafePreserveChecks: true },
 );
