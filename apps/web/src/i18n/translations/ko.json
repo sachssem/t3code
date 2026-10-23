@@ -6637,6 +6637,8 @@
   "aba09c3ce3311a68": "{repository}에서 {branch}을(를) 삭제합니다. 로컬 브랜치와 워크트리는 변경되지 않습니다.",
   "a08abd0f82d7806b": "{term, select, mr {병합 요청} cr {변경 요청} other {풀 리퀘스트}} 체크아웃 명령을 복사하는 중 클립보드 API를 사용할 수 없습니다.",
   "25fa8592a887a29b": "{term, select, mr {병합 요청} cr {변경 요청} other {풀 리퀘스트}} 체크아웃 명령을 클립보드에 복사하지 못했습니다.",
+  "c50169d67df2e845": "Counting commit {shortOid} only",
+  "c22ff3c3d8e3fc36": "These counts are for commit {shortOid}. Choose All commits to count the whole pull request.",
   "ff49cda2006d155a": "스택 포함 여부를 확인할 수 없습니다",
   "be49947d8fca9505": "스택 포함 여부 확인 중…",
   "a2e58d83bc5daf36": "자동 병합",

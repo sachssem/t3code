@@ -6669,6 +6669,8 @@
   "aba09c3ce3311a68": "Det här tar bort {branch} från {repository}. Lokala grenar och worktrees ändras inte.",
   "a08abd0f82d7806b": "Urklipps-API:t är inte tillgängligt vid kopiering av checkout-kommandot för {term, select, mr {merge requesten} cr {ändringsbegäran} other {pull requesten}}.",
   "25fa8592a887a29b": "Kunde inte kopiera checkout-kommandot för {term, select, mr {merge requesten} cr {ändringsbegäran} other {pull requesten}} till urklipp.",
+  "c50169d67df2e845": "Counting commit {shortOid} only",
+  "c22ff3c3d8e3fc36": "These counts are for commit {shortOid}. Choose All commits to count the whole pull request.",
   "ff49cda2006d155a": "Kunde inte kontrollera medlemskap i stacken",
   "be49947d8fca9505": "Kontrollerar medlemskap i stacken…",
   "a2e58d83bc5daf36": "Automatisk merge",

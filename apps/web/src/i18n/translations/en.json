@@ -6670,6 +6670,8 @@
   "aba09c3ce3311a68": "This deletes {branch} from {repository}. Local branches and worktrees are not changed.",
   "a08abd0f82d7806b": "Clipboard API is unavailable while copying {term, select, mr {merge request} cr {change request} other {pull request}} checkout command.",
   "25fa8592a887a29b": "Failed to copy {term, select, mr {merge request} cr {change request} other {pull request}} checkout command to the clipboard.",
+  "c50169d67df2e845": "Counting commit {shortOid} only",
+  "c22ff3c3d8e3fc36": "These counts are for commit {shortOid}. Choose All commits to count the whole pull request.",
   "ff49cda2006d155a": "Couldn't check stack membership",
   "be49947d8fca9505": "Checking stack membership…",
   "a2e58d83bc5daf36": "Auto-merge",

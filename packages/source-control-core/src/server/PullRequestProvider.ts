@@ -298,6 +298,7 @@ export interface ProviderDiffSlice {
   readonly nextCursor: string | null;
   readonly omittedFileStats?: ReadonlyArray<PullRequestOmittedFileStat>;
   readonly withheldFilesReadable?: boolean;
+  readonly fileStats?: ReadonlyArray<PullRequestOmittedFileStat>;
 }
 
 export interface ProviderDiffFileContents {

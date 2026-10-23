@@ -6676,6 +6676,8 @@
   "aba09c3ce3311a68": "这会从 {repository} 删除 {branch}。本地分支和工作树不受影响。",
   "a08abd0f82d7806b": "复制 {term, select, mr {merge request} cr {change request} other {pull request}} 检出命令时剪贴板 API 不可用。",
   "25fa8592a887a29b": "无法将 {term, select, mr {merge request} cr {change request} other {pull request}} 检出命令复制到剪贴板。",
+  "c50169d67df2e845": "Counting commit {shortOid} only",
+  "c22ff3c3d8e3fc36": "These counts are for commit {shortOid}. Choose All commits to count the whole pull request.",
   "ff49cda2006d155a": "无法检查堆叠归属",
   "be49947d8fca9505": "正在检查堆叠归属…",
   "a2e58d83bc5daf36": "自动合并",

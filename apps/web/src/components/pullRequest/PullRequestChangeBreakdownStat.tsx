@@ -1,4 +1,4 @@
-import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
+import type { EnvironmentId, PullRequestChangeBreakdown, PullRequestRef } from "@t3tools/contracts";
 import { T } from "gt-react";
 import { useState } from "react";
 
@@ -21,6 +21,7 @@ export function PullRequestChangeBreakdownStat({
   deletions,
   className,
   eager = false,
+  breakdown: scopedBreakdown,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -28,12 +29,16 @@ export function PullRequestChangeBreakdownStat({
   deletions: number;
   className: string;
   eager?: boolean;
+  /** Undefined reads the PR split; null withholds an incomplete commit split. */
+  breakdown?: PullRequestChangeBreakdown | undefined;
 }) {
   const [requested, setRequested] = useState(eager);
   const query = useEnvironmentQuery(
-    requested ? pullRequestEnvironment.changeBreakdown({ environmentId, input: reference }) : null,
+    requested && scopedBreakdown === undefined
+      ? pullRequestEnvironment.changeBreakdown({ environmentId, input: reference })
+      : null,
   );
-  const breakdown = query.data;
+  const breakdown = scopedBreakdown === undefined ? query.data : scopedBreakdown;
   if (additions === 0 && deletions === 0) return null;
   return (
     <Tooltip>

@@ -248,6 +248,7 @@ export const PullRequestCommit = Schema.Struct({
   committedDate: IsoDateTime,
   additions: Schema.optional(NonNegativeInt),
   deletions: Schema.optional(NonNegativeInt),
+  changedFiles: Schema.optional(NonNegativeInt),
   authors: Schema.optional(Schema.Array(PullRequestActor)),
 });
 export type PullRequestCommit = typeof PullRequestCommit.Type;
@@ -749,6 +750,8 @@ export const PullRequestDiffResult = Schema.Struct({
   omittedFileStats: Schema.optional(Schema.Array(PullRequestOmittedFileStat)),
   /** On the first page: files this diff withholds can be read one at a time with `path`. */
   withheldFilesReadable: Schema.optional(Schema.Boolean),
+  /** Complete host counts for this page, including files whose hunks were withheld. */
+  fileStats: Schema.optional(Schema.Array(PullRequestOmittedFileStat)),
 });
 export type PullRequestDiffResult = typeof PullRequestDiffResult.Type;
 

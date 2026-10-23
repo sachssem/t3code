@@ -6663,6 +6663,8 @@
   "aba09c3ce3311a68": "Dadurch wird {branch} aus {repository} gelöscht. Lokale Branches und Worktrees bleiben unverändert.",
   "a08abd0f82d7806b": "{term, select, mr {Die Zwischenablage-API ist beim Kopieren des Merge Request-Checkout-Befehls nicht verfügbar.} cr {Die Zwischenablage-API ist beim Kopieren des Änderungsanfrage-Checkout-Befehls nicht verfügbar.} other {Die Zwischenablage-API ist beim Kopieren des Pull Request-Checkout-Befehls nicht verfügbar.}}",
   "25fa8592a887a29b": "{term, select, mr {Der Merge Request-Checkout-Befehl konnte nicht in die Zwischenablage kopiert werden.} cr {Der Änderungsanfrage-Checkout-Befehl konnte nicht in die Zwischenablage kopiert werden.} other {Der Pull Request-Checkout-Befehl konnte nicht in die Zwischenablage kopiert werden.}}",
+  "c50169d67df2e845": "Nur Commit {shortOid} wird gezählt",
+  "c22ff3c3d8e3fc36": "Diese Zahlen gelten für Commit {shortOid}. Wähle Alle Commits, um den gesamten Pull Request zu zählen.",
   "ff49cda2006d155a": "Zugehörigkeit zum Stack konnte nicht geprüft werden",
   "be49947d8fca9505": "Zugehörigkeit zum Stack wird geprüft…",
   "a2e58d83bc5daf36": "Auto-Merge",

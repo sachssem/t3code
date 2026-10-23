@@ -955,7 +955,15 @@ layer("GitHubPullRequestApi.layer", (it) => {
               output(
                 encodeJson({
                   data: {
-                    nodes: [{ __typename: "Commit", oid: "regular", additions: 18, deletions: 7 }],
+                    nodes: [
+                      {
+                        __typename: "Commit",
+                        oid: "regular",
+                        additions: 18,
+                        deletions: 7,
+                        changedFilesIfAvailable: 4,
+                      },
+                    ],
                   },
                 }),
               ),
@@ -972,7 +980,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
           "deletions",
         );
         if (kind === "mixed") {
-          expect(activity.commits[0]).toMatchObject({ additions: 18, deletions: 7 });
+          expect(activity.commits[0]).toMatchObject({
+            additions: 18,
+            deletions: 7,
+            changedFiles: 4,
+          });
         } else if (kind === "unavailable") {
           expect(activity.commits[0]).not.toHaveProperty("additions");
         }
@@ -1027,7 +1039,15 @@ layer("GitHubPullRequestApi.layer", (it) => {
               output(
                 encodeJson({
                   data: {
-                    nodes: [{ __typename: "Commit", oid: "regular", additions: 3, deletions: 1 }],
+                    nodes: [
+                      {
+                        __typename: "Commit",
+                        oid: "regular",
+                        additions: 3,
+                        changedFilesIfAvailable: 1,
+                        deletions: 1,
+                      },
+                    ],
                   },
                 }),
               ),
@@ -3375,9 +3395,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("reads a named commit from the commit endpoint rather than the whole diff", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(`{"files":${pullRequestFiles(2, 1)}}`)),
-      );
+      const files = [
+        { filename: "src/file1.ts", additions: 5, deletions: 3, patch: "@@ -1 +1 @@\n-old\n+new" },
+        { filename: "image.png", additions: 4, deletions: 2 },
+      ];
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson({ files }))));
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
       const diff = yield* cli.getPullRequestDiff({
@@ -3391,6 +3413,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
       assert.isNull(diff.nextCursor);
       expect(diff.patch).toContain("diff --git a/src/file1.ts b/src/file1.ts");
+      expect(diff.fileStats).toEqual([
+        { path: "src/file1.ts", additions: 5, deletions: 3 },
+        { path: "image.png", additions: 4, deletions: 2 },
+      ]);
       assert.strictEqual(
         pathAt(0),
         "repos/acme/web/commits/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0?per_page=30&page=1",
