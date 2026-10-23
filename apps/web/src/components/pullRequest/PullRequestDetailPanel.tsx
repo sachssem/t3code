@@ -725,7 +725,6 @@ export function PullRequestDetailPanel({
       // Interrupting a mutation's activity refresh can leave SWR displaying stale data.
       setActivityRevision(next);
       setActivityRevalidations((count) => count + 1);
-      setRefreshToken((token) => token + 1);
     }
   }
   const revalidateActivity = useEffectEvent(() => activityQuery.refresh());
@@ -2187,7 +2186,7 @@ export function PullRequestDetailPanel({
                     {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                     onRefresh={refreshDetail}
                     refreshToken={refreshToken}
-                    backgroundRefreshToken={turnRefresh ?? 0}
+                    backgroundRefreshToken={(turnRefresh ?? 0) + activityRevalidations}
                     revealRequest={codeRevealRequest}
                     revealUrl={tab === "code" ? revealUrl : undefined}
                     onRevealSettled={settleReveal}
