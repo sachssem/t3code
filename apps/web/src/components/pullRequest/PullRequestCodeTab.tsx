@@ -62,7 +62,12 @@ import { usePullRequestScrollMemory } from "./usePullRequestViewMemory";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
-import { areAllDiffFilesCollapsed, isGeneratedDiffFile } from "~/lib/diffCollapse";
+import {
+  areAllDiffFilesCollapsed,
+  isGeneratedDiffFile,
+  compileDiffCollapsePatterns,
+  matchesDiffCollapsePatterns,
+} from "~/lib/diffCollapse";
 import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
 import {
   canEditPullRequestComment,
@@ -130,11 +135,14 @@ import {
   getFileViewedRange,
   isFileDiffCollapsed,
   isLineInFileDiff,
-  toggleFileDiffFoldForViewed,
+  withFileDiffFold,
+  pullRequestFileFoldDefault,
+  type FileDiffFolds,
   type DiffFoldOverride,
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
+import { retainViewedAtOpen } from "./pullRequestFilesViewed.logic";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import {
   nextPendingReviewCommentId,
@@ -345,16 +353,18 @@ function PullRequestCodeTab({
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
     diffCollapseGeneratedFiles: settings.diffCollapseGeneratedFiles,
+    diffCollapsePathPatterns: settings.diffCollapsePathPatterns,
+    pullRequestCollapseReviewedFiles: settings.pullRequestCollapseReviewedFiles,
+    pullRequestMarkAutoCollapsedFilesViewed: settings.pullRequestMarkAutoCollapsedFilesViewed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
   }));
-  const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() => new Set());
+  const [fileFolds, setFileFolds] = useState<FileDiffFolds>(() => new Map());
   const [lastViewedFileKey, setLastViewedFileKey] = useState<string | null>(null);
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
-  const effectiveFoldOverride =
-    foldOverride ?? (settings.diffFilesCollapsed ? "folded" : "expanded");
+  const savedFoldDefault = settings.diffFilesCollapsed ? "folded" : "expanded";
   const diffLayout = settings.diffLayout;
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
@@ -397,7 +407,7 @@ function PullRequestCodeTab({
     setRestoreAnchor(viewMemory?.read()?.code?.[scopeKey]);
     setDraft(null);
     setSelectedLines(null);
-    setToggledFiles(new Set());
+    setFileFolds(new Map());
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
@@ -491,11 +501,57 @@ function PullRequestCodeTab({
   });
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
 
+  // The cache key carries the theme, which is what the tokenizer caches against, so a theme
+  // change is still a fresh parse. The patch's own hash is part of it too: a refreshed page
+  // reuses its cursor, and a key of position alone would hand back the parse it replaced.
+  const parsedSlices = loadedSlices.map((slice) =>
+    parseSlice(
+      slice,
+      `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`,
+      ignoreWhitespace,
+    ),
+  );
+  const loadedFiles = orderDiffFilesLikeTree(
+    parsedSlices.flatMap((parsed) =>
+      parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
+    ),
+  );
+  const testFileCount = loadedFiles.filter((file) =>
+    isTestChangedFile(resolveFileDiffPath(file)),
+  ).length;
+  // A requested file stays visible so a jump to a hidden test still lands.
+  const files = hideTestFiles
+    ? loadedFiles.filter((file) => {
+        const path = resolveFileDiffPath(file);
+        return path === revealRequest?.path || !isTestChangedFile(path);
+      })
+    : loadedFiles;
+  const hiddenTestFileCount = loadedFiles.length - files.length;
+  const filePaths = files.map((file) => resolveFileDiffPath(file));
+  const generatedPaths = new Set(loadedSlices.flatMap((slice) => slice.generatedPaths));
+  const collapsePathPatterns = compileDiffCollapsePatterns(
+    settings.diffCollapsePathPatterns,
+  ).matchers;
+  const autoCollapsedPaths = settings.pullRequestMarkAutoCollapsedFilesViewed
+    ? [
+        ...new Set([
+          ...loadedFiles.map(resolveFileDiffPath),
+          ...loadedSlices.flatMap((slice) =>
+            [...(slice.fileStats ?? []), ...slice.omittedFileStats].map((file) => file.path),
+          ),
+        ]),
+      ].filter(
+        (path) =>
+          (settings.diffCollapseGeneratedFiles && isGeneratedDiffFile(path, generatedPaths)) ||
+          matchesDiffCollapsePatterns(path, collapsePathPatterns),
+      )
+    : undefined;
   const viewedFilesStore = detail.capabilities.viewedFiles;
   const filesViewed = usePullRequestFilesViewed({
     environmentId,
     reference,
     enabled: viewedFilesStore !== undefined,
+    ...(autoCollapsedPaths === undefined ? {} : { markViewedPaths: autoCollapsedPaths }),
   });
   const {
     setViewed,
@@ -504,6 +560,29 @@ function PullRequestCodeTab({
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
+  const [reviewedAtOpen, setReviewedAtOpen] = useState<{
+    readonly key: string;
+    readonly paths: ReadonlySet<string>;
+  }>({ key: "", paths: new Set() });
+  if (filesViewed.viewedPaths !== null) {
+    const paths =
+      reviewedAtOpen.key === scopeKey
+        ? retainViewedAtOpen(reviewedAtOpen.paths, filesViewed.viewedPaths)
+        : filesViewed.viewedPaths;
+    if (reviewedAtOpen.key !== scopeKey || paths !== reviewedAtOpen.paths)
+      setReviewedAtOpen({ key: scopeKey, paths });
+  }
+  const reviewedPaths =
+    settings.pullRequestCollapseReviewedFiles && reviewedAtOpen.key === scopeKey
+      ? reviewedAtOpen.paths
+      : new Set<string>();
+  const foldOverrideFor = (path: string) =>
+    pullRequestFileFoldDefault(path, foldOverride, savedFoldDefault, {
+      pathPatterns: collapsePathPatterns,
+      reviewedPaths,
+      generatedPaths,
+      generatedFiles: settings.diffCollapseGeneratedFiles,
+    });
   const appliedRefreshToken = useRef(refreshToken);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new refresh token clears loaded slices and refetches the first diff page and viewed files
   useEffect(() => {
@@ -613,33 +692,6 @@ function PullRequestCodeTab({
   // Agent context is local, so it does not require host comment permission.
   const canSelectLines =
     commit === null && (review.inlineComment || onAddToAgentSelection !== undefined);
-  // The cache key carries the theme, which is what the tokenizer caches against, so a theme
-  // change is still a fresh parse. The patch's own hash is part of it too: a refreshed page
-  // reuses its cursor, and a key of position alone would hand back the parse it replaced.
-  const parsedSlices = loadedSlices.map((slice) =>
-    parseSlice(
-      slice,
-      `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`,
-      ignoreWhitespace,
-    ),
-  );
-  const loadedFiles = orderDiffFilesLikeTree(
-    parsedSlices.flatMap((parsed) =>
-      parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
-    ),
-  );
-  const testFileCount = loadedFiles.filter((file) =>
-    isTestChangedFile(resolveFileDiffPath(file)),
-  ).length;
-  // A requested file stays visible so a jump to a hidden test still lands.
-  const files = hideTestFiles
-    ? loadedFiles.filter((file) => {
-        const path = resolveFileDiffPath(file);
-        return path === revealRequest?.path || !isTestChangedFile(path);
-      })
-    : loadedFiles;
-  const hiddenTestFileCount = loadedFiles.length - files.length;
-  const filePaths = files.map((file) => resolveFileDiffPath(file));
   const omittedFileStats = new Map(
     loadedSlices.flatMap((slice) =>
       slice.omittedFileStats.map((file) => [file.path, file] as const),
@@ -787,15 +839,9 @@ function PullRequestCodeTab({
       </div>
     );
 
-  const generatedPaths = new Set(loadedSlices.flatMap((slice) => slice.generatedPaths));
-  const foldOverrideFor = (path: string): "expanded" | "folded" =>
-    foldOverride ??
-    (settings.diffCollapseGeneratedFiles && isGeneratedDiffFile(path, generatedPaths)
-      ? "folded"
-      : effectiveFoldOverride);
   const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
     ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
-      const collapsed = isFileDiffCollapsed(fileKey, foldOverrideFor(path), toggledFiles);
+      const collapsed = isFileDiffCollapsed(fileKey, foldOverrideFor(path), fileFolds);
       const viewedMark = filesViewedEnabled
         ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
         : "";
@@ -840,13 +886,11 @@ function PullRequestCodeTab({
     );
   };
 
-  const toggleFile = (fileKey: string) =>
-    setToggledFiles((current) => {
-      const next = new Set(current);
-      if (next.has(fileKey)) next.delete(fileKey);
-      else next.add(fileKey);
-      return next;
-    });
+  const toggleFile = (fileKey: string) => {
+    const item = items.find((candidate) => candidate.id === fileKey);
+    if (item === undefined) return;
+    setFileFolds((current) => withFileDiffFold(current, fileKey, item.collapsed !== true));
+  };
 
   const setFileViewed = (fileKey: string, viewed: boolean, extendRange: boolean) => {
     const range = getFileViewedRange(
@@ -856,12 +900,8 @@ function PullRequestCodeTab({
     );
     setLastViewedFileKey(fileKey);
     for (const file of range) setViewed(file.path, viewed);
-    setToggledFiles((current) =>
-      range.reduce(
-        (next, file) =>
-          toggleFileDiffFoldForViewed(file.fileKey, viewed, foldOverrideFor(file.path), next),
-        current,
-      ),
+    setFileFolds((current) =>
+      range.reduce((next, file) => withFileDiffFold(next, file.fileKey, viewed), current),
     );
   };
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -915,21 +955,14 @@ function PullRequestCodeTab({
     if (item === undefined) return;
     // Unfold only: a second reveal before the unfold renders must not fold the file again.
     if (item.collapsed === true) {
-      setToggledFiles((current) =>
-        toggleFileDiffFoldForViewed(
-          item.id,
-          false,
-          foldOverrideFor(resolveFileDiffPath(item.fileDiff)),
-          current,
-        ),
-      );
+      setFileFolds((current) => withFileDiffFold(current, item.id, false));
     }
     codeViewReveal.request(item.id);
   };
 
   const toggleAllFiles = () => {
     setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
-    setToggledFiles(new Set());
+    setFileFolds(new Map());
   };
 
   const orderedCommits = // GitLab preserves UTC offsets, so compare instants.
@@ -1829,14 +1862,7 @@ function PullRequestCodeTab({
               renderAnnotation={renderAnnotation}
               // Find may repeat requests before render; only unfold, never toggle.
               onRevealSearchMatch={(item) =>
-                setToggledFiles((current) =>
-                  toggleFileDiffFoldForViewed(
-                    item.id,
-                    false,
-                    foldOverrideFor(item.type === "diff" ? resolveFileDiffPath(item.fileDiff) : ""),
-                    current,
-                  ),
-                )
+                setFileFolds((current) => withFileDiffFold(current, item.id, false))
               }
               unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
             />

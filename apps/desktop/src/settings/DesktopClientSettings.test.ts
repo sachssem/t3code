@@ -214,6 +214,33 @@ describe("DesktopClientSettings", () => {
     ),
   );
 
+  it.effect.each([false, true])("migrates legacy auto-collapse keys, wrapped=%s", (wrapped) =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        const stored = {
+          pullRequestCollapseTestFiles: false,
+          pullRequestMarkGeneratedFilesViewed: false,
+          wordWrap: false,
+        };
+        yield* fileSystem.writeFileString(
+          environment.clientSettingsPath,
+          JSON.stringify(wrapped ? { settings: stored } : stored),
+        );
+        const persisted = yield* settings.get;
+        assert.isTrue(Option.isSome(persisted));
+        if (Option.isSome(persisted)) {
+          assert.deepEqual(persisted.value.diffCollapsePathPatterns, []);
+          assert.isFalse(persisted.value.pullRequestMarkAutoCollapsedFilesViewed);
+          assert.isFalse(persisted.value.wordWrap);
+        }
+      }),
+    ),
+  );
+
   it.effect("loads legacy wrapped client settings documents", () =>
     withClientSettings(
       Effect.gen(function* () {

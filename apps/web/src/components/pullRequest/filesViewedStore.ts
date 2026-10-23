@@ -9,6 +9,9 @@ import type {
   PullRequestRef,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import * as Schema from "effect/Schema";
+import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
+import { createAutoViewedMemoryStore } from "./pullRequestAutoViewedMemory.logic";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -17,7 +20,9 @@ import { toastManager } from "../ui/toast";
 import {
   revertFileViewedOverlay,
   settleFileViewedOverlay,
-  toFileViewedBatch,
+  toFileViewedBatches,
+  takeAutoCollapsedFilesToMarkViewed,
+  type AutoCollapsedFilesViewedMemory,
   toFileViewedStates,
   type FileViewedOverlay,
 } from "./pullRequestFilesViewed.logic";
@@ -31,6 +36,10 @@ type FilesViewedBatch = ReadonlyArray<{ readonly path: string; readonly viewed: 
 
 export interface FilesViewedStoreDeps {
   readonly flushDelayMs: number;
+  readonly updateAutoViewedMemory?: (
+    key: string,
+    update: (memory: AutoCollapsedFilesViewedMemory) => void,
+  ) => void;
   /** Calls `onAnswer` with the host's current answer at once, then with every later one. */
   readonly subscribeAnswers: (
     target: FilesViewedTarget,
@@ -49,6 +58,7 @@ export interface FilesViewedScopeHandle {
   readonly subscribe: (listener: () => void) => () => void;
   readonly getSnapshot: () => FileViewedOverlay;
   readonly setViewed: (path: string, viewed: boolean) => void;
+  readonly markViewed: (paths: ReadonlyArray<string>) => void;
 }
 
 const NO_OVERLAY: FileViewedOverlay = new Map();
@@ -59,6 +69,7 @@ interface FilesViewedScope {
   readonly unsubscribeAnswers: () => void;
   overlay: FileViewedOverlay;
   queued: Map<string, boolean>;
+  autoQueued: Map<string, boolean>;
   readonly sentBy: Map<string, number>;
   requests: number;
   timer: ReturnType<typeof setTimeout> | null;
@@ -77,6 +88,12 @@ interface FilesViewedScope {
  * by the other.
  */
 export function createFilesViewedStore(deps: FilesViewedStoreDeps) {
+  const updateAutoViewedMemory =
+    deps.updateAutoViewedMemory ??
+    createAutoViewedMemoryStore(
+      () => [],
+      () => {},
+    );
   const scopes = new Map<string, FilesViewedScope>();
   const handles = new Map<string, FilesViewedScopeHandle>();
 
@@ -91,7 +108,11 @@ export function createFilesViewedStore(deps: FilesViewedStoreDeps) {
   const settle = (scope: FilesViewedScope, answer: PullRequestFilesViewedResult | null) => {
     if (answer === scope.answer) return;
     scope.answer = answer;
-    const pending = new Set([...scope.queued.keys(), ...scope.sentBy.keys()]);
+    const pending = new Set([
+      ...scope.queued.keys(),
+      ...scope.autoQueued.keys(),
+      ...scope.sentBy.keys(),
+    ]);
     const answered = new Set<string>();
     for (const [path, from] of scope.answeredFrom) {
       if (pending.has(path) || from === answer) continue;
@@ -106,9 +127,13 @@ export function createFilesViewedStore(deps: FilesViewedStoreDeps) {
 
   const flush = (key: string, scope: FilesViewedScope) => {
     scope.timer = null;
-    const batch = toFileViewedBatch(scope.queued);
-    if (batch.length === 0) return;
+    const batches = toFileViewedBatches(scope.queued, scope.autoQueued);
     scope.queued = new Map();
+    scope.autoQueued = new Map();
+    for (const batch of batches) send(key, scope, batch);
+  };
+
+  const send = (key: string, scope: FilesViewedScope, batch: FilesViewedBatch) => {
     const request = ++scope.requests;
     for (const file of batch) scope.sentBy.set(file.path, request);
     void deps.send(scope.target, batch).then((result) => {
@@ -125,7 +150,9 @@ export function createFilesViewedStore(deps: FilesViewedStoreDeps) {
         return;
       }
       if (result._tag === "Failure") {
-        const owned = new Set(mine.filter((path) => !scope.queued.has(path)));
+        const owned = new Set(
+          mine.filter((path) => !scope.queued.has(path) && !scope.autoQueued.has(path)),
+        );
         publish(scope, revertFileViewedOverlay(scope.overlay, batch, owned));
         if (owned.size > 0 && !isAtomCommandInterrupted(result)) {
           deps.reportFailure();
@@ -165,6 +192,7 @@ export function createFilesViewedStore(deps: FilesViewedStoreDeps) {
         unsubscribeAnswers,
         overlay: NO_OVERLAY,
         queued: new Map(),
+        autoQueued: new Map(),
         sentBy: new Map(),
         requests: 0,
         timer: null,
@@ -197,15 +225,43 @@ export function createFilesViewedStore(deps: FilesViewedStoreDeps) {
      */
     scope(target: FilesViewedTarget): FilesViewedScopeHandle {
       const key = filesViewedScopeKey(target);
+      const memoryKey = autoViewedMemoryScopeKey(target);
       const cached = handles.get(key);
       if (cached !== undefined) return cached;
       const owned = { environmentId: target.environmentId, reference: { ...target.reference } };
       const handle: FilesViewedScopeHandle = {
         subscribe: (listener) => acquire(key, owned, handle, listener),
         getSnapshot: () => scopes.get(key)?.overlay ?? NO_OVERLAY,
+        markViewed: (paths) => {
+          const scope = scopes.get(key);
+          if (scope === undefined) return;
+          updateAutoViewedMemory(memoryKey, (memory) => {
+            const marks = takeAutoCollapsedFilesToMarkViewed(
+              paths,
+              toFileViewedStates(scope.answer),
+              scope.overlay,
+              memory,
+              scope.answer?.truncated,
+            );
+            if (marks.length === 0) return;
+            const overlay = new Map(scope.overlay);
+            for (const path of marks) {
+              scope.autoQueued.set(path, true);
+              overlay.set(path, true);
+            }
+            if (scope.timer !== null) clearTimeout(scope.timer);
+            scope.timer = setTimeout(() => flush(key, scope), deps.flushDelayMs);
+            publish(scope, overlay);
+          });
+        },
         setViewed: (path, viewed) => {
           const scope = scopes.get(key);
           if (scope === undefined) return;
+          updateAutoViewedMemory(memoryKey, (memory) => {
+            memory.touched.add(path);
+            memory.remarked.add(path);
+          });
+          scope.autoQueued.delete(path);
           scope.queued.set(path, viewed);
           publish(scope, new Map(scope.overlay).set(path, viewed));
           if (scope.timer !== null) clearTimeout(scope.timer);
@@ -215,6 +271,16 @@ export function createFilesViewedStore(deps: FilesViewedStoreDeps) {
       return handle;
     },
   };
+}
+
+export function autoViewedMemoryScopeKey({ environmentId, reference }: FilesViewedTarget): string {
+  return JSON.stringify([
+    environmentId,
+    reference.projectId,
+    reference.host,
+    reference.repository,
+    reference.number,
+  ]);
 }
 
 function filesViewedScopeKey({ environmentId, reference }: FilesViewedTarget): string {
@@ -232,7 +298,34 @@ function filesViewedScopeKey({ environmentId, reference }: FilesViewedTarget): s
 const filesViewedAtom = ({ environmentId, reference }: FilesViewedTarget) =>
   pullRequestEnvironment.filesViewed({ environmentId, input: reference });
 
+const AUTO_VIEWED_MEMORY_KEY = "t3code:pr-auto-viewed-memory:v1";
+const StoredAutoViewedMemory = Schema.Array(
+  Schema.Struct({
+    scope: Schema.String,
+    touched: Schema.Array(Schema.String),
+    remarked: Schema.Array(Schema.String),
+  }),
+);
+const updateAutoViewedMemory = createAutoViewedMemoryStore(
+  () => {
+    try {
+      return getLocalStorageItem(AUTO_VIEWED_MEMORY_KEY, StoredAutoViewedMemory) ?? [];
+    } catch (error) {
+      console.error("Could not read auto-viewed file memory.", error);
+      return [];
+    }
+  },
+  (entries) => {
+    try {
+      setLocalStorageItem(AUTO_VIEWED_MEMORY_KEY, entries, StoredAutoViewedMemory);
+    } catch (error) {
+      console.error("Could not save auto-viewed file memory.", error);
+    }
+  },
+);
+
 const filesViewedStore = createFilesViewedStore({
+  updateAutoViewedMemory,
   flushDelayMs: 400,
   subscribeAnswers: (target, onAnswer) =>
     appAtomRegistry.subscribe(

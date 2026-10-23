@@ -213,6 +213,12 @@ PR creation from Git actions continue to use the project's environment.
 For Azure DevOps, use the host website to change comments. Bitbucket does not support reopening a
 declined pull request.
 
+### Auto-collapse files
+
+On web and desktop, files that match the auto-collapse patterns, generated files, and files already marked viewed start collapsed in PR reviews. Generated files include lockfiles and other common generated paths, plus files marked `linguist-generated` in the project's `.gitattributes`. Patterns and generated-file rules also apply to local diffs.
+
+In Settings > Diffs, edit **Auto-collapse files matching** with one regular expression per line, or clear it to disable patterns. You can also disable generated-file collapse, reviewed-file collapse, or **Mark auto-collapsed files as viewed in pull requests**. Automatic viewed marks reduce the lines left to review. Unmarking a file keeps it unmarked for the session. Opening a collapsed file and using expand or collapse all always override the defaults.
+
 ### Review guides
 
 Review guides are in beta. Turn on **Review guides** in Settings → Source control to add the

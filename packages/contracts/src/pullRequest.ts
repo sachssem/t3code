@@ -712,7 +712,7 @@ export const PullRequestChangeBreakdown = Schema.NullOr(
 );
 export type PullRequestChangeBreakdown = typeof PullRequestChangeBreakdown.Type;
 
-const MAX_FILES_VIEWED_PRESSES = 500;
+export const MAX_FILES_VIEWED_PRESSES = 500;
 
 export const PullRequestSetFilesViewedInput = Schema.Struct({
   ...PullRequestRef.fields,

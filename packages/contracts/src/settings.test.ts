@@ -9,6 +9,8 @@ import {
 } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
+  DEFAULT_DIFF_COLLAPSE_PATH_PATTERNS,
+  migrateLegacyClientSettings,
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
@@ -482,5 +484,69 @@ describe("server model preferences", () => {
     const input = { favorites: [], providerModelPreferences: {} };
     expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
     expect(decodeServerSettingsPatch(input)).toEqual(input);
+  });
+});
+
+describe("ClientSettings auto-collapse", () => {
+  it("folds tests, reviewed and generated files and marks them viewed by default", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.diffCollapsePathPatterns).toEqual(DEFAULT_DIFF_COLLAPSE_PATH_PATTERNS);
+    expect(settings.pullRequestCollapseReviewedFiles).toBe(true);
+    expect(settings.diffCollapseGeneratedFiles).toBe(true);
+    expect(settings.pullRequestMarkAutoCollapsedFilesViewed).toBe(true);
+  });
+
+  it("preserves a saved choice to leave them alone", () => {
+    const settings = decodeClientSettings({
+      diffCollapsePathPatterns: [],
+      pullRequestCollapseReviewedFiles: false,
+      diffCollapseGeneratedFiles: false,
+      pullRequestMarkAutoCollapsedFilesViewed: false,
+    });
+    const encoded = encodeClientSettings(settings);
+    expect(encoded.diffCollapsePathPatterns).toEqual([]);
+    expect(encoded.pullRequestCollapseReviewedFiles).toBe(false);
+    expect(encoded.diffCollapseGeneratedFiles).toBe(false);
+    expect(encoded.pullRequestMarkAutoCollapsedFilesViewed).toBe(false);
+    expect(
+      decodeClientSettingsPatch({ diffCollapsePathPatterns: ["\\.snap$"] })
+        .diffCollapsePathPatterns,
+    ).toEqual(["\\.snap$"]);
+  });
+});
+
+describe("migrateLegacyClientSettings", () => {
+  const migrated = (stored: Record<string, unknown>) =>
+    decodeClientSettings(migrateLegacyClientSettings(stored));
+
+  it("turns test files left open into an empty pattern list", () => {
+    const settings = migrated({ pullRequestCollapseTestFiles: false, wordWrap: false });
+    expect(settings.diffCollapsePathPatterns).toEqual([]);
+    expect(settings.wordWrap).toBe(false);
+  });
+
+  it("keeps the default patterns for test files that were folded", () => {
+    expect(migrated({ pullRequestCollapseTestFiles: true }).diffCollapsePathPatterns).toEqual(
+      DEFAULT_DIFF_COLLAPSE_PATH_PATTERNS,
+    );
+  });
+
+  it("carries the generated-files viewed choice over to auto-collapsed files", () => {
+    const off = migrated({ pullRequestMarkGeneratedFilesViewed: false });
+    expect(off.pullRequestMarkAutoCollapsedFilesViewed).toBe(false);
+    expect(migrated({}).pullRequestMarkAutoCollapsedFilesViewed).toBe(true);
+  });
+
+  it("lets a value already saved under the new key win, and drops the old keys", () => {
+    const stored = migrateLegacyClientSettings({
+      pullRequestCollapseTestFiles: false,
+      pullRequestMarkGeneratedFilesViewed: false,
+      diffCollapsePathPatterns: ["^docs/"],
+      pullRequestMarkAutoCollapsedFilesViewed: true,
+    });
+    expect(stored).toEqual({
+      diffCollapsePathPatterns: ["^docs/"],
+      pullRequestMarkAutoCollapsedFilesViewed: true,
+    });
   });
 });

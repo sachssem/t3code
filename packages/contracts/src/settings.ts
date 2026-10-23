@@ -348,6 +348,41 @@ export type ModelPreferences = {
   readonly providerModelPreferences: typeof ProviderModelPreferences.Type;
 };
 
+/**
+ * Test and spec files across the common ecosystems: a directory that holds only tests or what
+ * they generate, `foo.test.ts`, `foo_test.go`, `test_foo.py`, `FooTest.java`.
+ */
+export const DEFAULT_DIFF_COLLAPSE_PATH_PATTERNS: ReadonlyArray<string> = [
+  "(^|/)(__tests__|__mocks__|__snapshots__|tests?|spec)/",
+  "\\.(test|spec)\\.[^/]+$",
+  "_(test|spec)\\.[^/.]+$",
+  "(^|/)test_[^/]+\\.py$",
+  "[a-z0-9](Tests?|Spec)\\.[^/.]+$",
+];
+
+/** Apply renamed preferences before schema defaults can hide the legacy values. */
+export function migrateLegacyClientSettings(stored: unknown): unknown {
+  if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return stored;
+  if (
+    !("pullRequestCollapseTestFiles" in stored) &&
+    !("pullRequestMarkGeneratedFilesViewed" in stored)
+  ) {
+    return stored;
+  }
+  const {
+    pullRequestCollapseTestFiles: collapseTestFiles,
+    pullRequestMarkGeneratedFilesViewed: markGeneratedViewed,
+    ...rest
+  } = stored as Record<string, unknown>;
+  return {
+    ...(collapseTestFiles === false ? { diffCollapsePathPatterns: [] } : {}),
+    ...(typeof markGeneratedViewed === "boolean"
+      ? { pullRequestMarkAutoCollapsedFilesViewed: markGeneratedViewed }
+      : {}),
+    ...rest,
+  };
+}
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -417,6 +452,15 @@ export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadUnpin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  diffCollapsePathPatterns: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_DIFF_COLLAPSE_PATH_PATTERNS)),
+  ),
+  pullRequestCollapseReviewedFiles: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  pullRequestMarkAutoCollapsedFilesViewed: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
   diffCollapseGeneratedFiles: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   diffFilesCollapsed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   diffIgnoreWhitespace: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -1745,6 +1789,9 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   confirmThreadUnpin: Schema.optionalKey(Schema.Boolean),
+  diffCollapsePathPatterns: Schema.optionalKey(Schema.Array(Schema.String)),
+  pullRequestCollapseReviewedFiles: Schema.optionalKey(Schema.Boolean),
+  pullRequestMarkAutoCollapsedFilesViewed: Schema.optionalKey(Schema.Boolean),
   diffCollapseGeneratedFiles: Schema.optionalKey(Schema.Boolean),
   diffFilesCollapsed: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
