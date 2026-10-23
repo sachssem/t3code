@@ -73,6 +73,8 @@ import {
   resolveDiffReviewAnchor,
   type ReviewCommentContext,
 } from "~/reviewCommentContext";
+import { refreshLoadedDiffPages } from "./pullRequestDiffRefresh.logic";
+import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -365,8 +367,10 @@ function PullRequestCodeTab({
     readonly cursor: string | null;
     readonly scopeKey: string;
   } | null>(null);
+  const [refreshingRevision, setRefreshingRevision] = useState(false);
   const data = diffQuery.data;
   if (
+    !refreshingRevision &&
     data !== null &&
     (appliedPage?.data !== data ||
       appliedPage.cursor !== cursor ||
@@ -459,16 +463,77 @@ function PullRequestCodeTab({
     refreshFirstDiffPage();
     refreshFilesViewed();
   }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
+  const readFreshDiff = useAtomQueryRunner(pullRequestEnvironment.diff, {
+    refresh: true,
+    reportFailure: false,
+  });
+  const revision = detail.headSha ?? detail.updatedAt;
+  const appliedRevision = useRef({ scopeKey, revision });
+  const revisionRefreshPending = useRef(false);
   const appliedBackgroundRefreshToken = useRef(backgroundRefreshToken);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a background refresh token refetches the first diff page and viewed files while keeping slices
-  useEffect(() => {
-    if (appliedBackgroundRefreshToken.current === backgroundRefreshToken) return;
-    appliedBackgroundRefreshToken.current = backgroundRefreshToken;
-    // Keeping slices mounted preserves scroll; the page merge invalidates changed pages.
-    setSliceState((previous) => ({ ...previous, cursor: null }));
-    refreshFirstDiffPage();
-    refreshFilesViewed();
-  }, [backgroundRefreshToken, refreshFirstDiffPage, refreshFilesViewed]);
+  const refreshBackground = useEffectEvent(
+    (scopeKey: string, revision: string, backgroundRefreshToken: number) => {
+      const previous = appliedRevision.current;
+      appliedRevision.current = { scopeKey, revision };
+      if (previous.scopeKey !== scopeKey) {
+        revisionRefreshPending.current = false;
+        setRefreshingRevision(false);
+      }
+      const moved =
+        previous.scopeKey === scopeKey &&
+        (previous.revision !== revision || revisionRefreshPending.current);
+      const requested = appliedBackgroundRefreshToken.current !== backgroundRefreshToken;
+      appliedBackgroundRefreshToken.current = backgroundRefreshToken;
+      if (!moved && !requested) return;
+      refreshFilesViewed();
+      if (!moved || loadedSlices.length === 0) {
+        setSliceState((current) => ({ ...current, cursor: null }));
+        refreshFirstDiffPage();
+        return;
+      }
+      let cancelled = false;
+      revisionRefreshPending.current = true;
+      setRefreshingRevision(true);
+      void refreshLoadedDiffPages(loadedSlices.length, async (pageCursor) => {
+        const result = await readFreshDiff({
+          environmentId,
+          input: {
+            ...reference,
+            ...(pageCursor === null ? {} : { cursor: pageCursor }),
+            ...(commit === null ? {} : { commit }),
+          },
+        });
+        return result._tag === "Success" ? result.value : null;
+      }).then((pages) => {
+        if (cancelled) return;
+        if (pages !== null) {
+          setSliceState({
+            key: scopeKey,
+            cursor: pages.at(-1)?.cursor ?? null,
+            slices: pages.map((page) => ({
+              cursor: page.cursor,
+              patch: page.patch,
+              truncated: page.truncated,
+              nextCursor: page.nextCursor,
+              source: page,
+              omittedFileStats: page.omittedFileStats ?? [],
+            })),
+          });
+          setAppliedPage(null);
+        }
+        revisionRefreshPending.current = false;
+        setRefreshingRevision(false);
+      });
+      return () => {
+        cancelled = true;
+      };
+    },
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes cached diff pages when the remote PR revision changes while retaining mounted pages
+  useEffect(
+    () => refreshBackground(scopeKey, revision, backgroundRefreshToken),
+    [scopeKey, revision, backgroundRefreshToken],
+  );
 
   const codeViewReveal = useCodeViewFileReveal();
   const answeredRevealNonce = useRef<number | null>(null);
@@ -690,6 +755,7 @@ function PullRequestCodeTab({
   const canLoadNextSlice =
     nextCursor !== null &&
     nextCursor !== cursor &&
+    !refreshingRevision &&
     !diffQuery.isPending &&
     diffQuery.error === null;
   const loadNextSlice = () => {
