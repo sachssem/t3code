@@ -161,6 +161,9 @@ field gets its own undo back. Terminals always keep their native shortcut.
 
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.
+With focus in the file viewer outside the text editor, they step through the files
+you opened in that thread's panel. Mouse back and forward buttons step through
+the file history anywhere over the viewer.
 
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your

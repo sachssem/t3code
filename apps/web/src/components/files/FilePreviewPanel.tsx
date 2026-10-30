@@ -86,6 +86,7 @@ import { PreviewImage } from "./PreviewImage";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileExplorerPane } from "./FileExplorerPane";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
+import { fileViewerHistoryRootProps } from "./fileViewerHistory";
 import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import {
@@ -1227,24 +1228,32 @@ export default function FilePreviewPanel({
     })();
   };
 
+  const historyRootProps = fileViewerHistoryRootProps(threadRef);
+
   if (attachment === undefined && !canReadFiles) {
     if (fileAccess.isPending) {
       return (
-        <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+        <div
+          {...historyRootProps}
+          className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"
+        >
           <Spinner className="size-4" />
           Checking file access...
         </div>
       );
     }
     return (
-      <div className="p-4 text-sm text-muted-foreground">
+      <div {...historyRootProps} className="p-4 text-sm text-muted-foreground">
         {fileAccess.error ?? "This connection cannot read host files."}
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+    <div
+      {...historyRootProps}
+      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
+    >
       {breadcrumbPath !== null && breadcrumbTrail !== null ? (
         <div className={FILE_SURFACE_SUBHEADER_CLASS} data-surface-subheader>
           <ScrollArea
