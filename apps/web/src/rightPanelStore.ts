@@ -102,6 +102,22 @@ export interface ThreadRightPanelState {
   proactiveDiffTurnId?: RunId;
 }
 
+type FileKindSurface = Extract<RightPanelSurface, { kind: "files" | "file" }>;
+
+/** The file-kind part of a thread's panel before a file navigation. */
+interface FileHistoryEntry {
+  isOpen: boolean;
+  activeSurfaceId: string | null;
+  surfaces: ReadonlyArray<{ index: number; surface: FileKindSurface }>;
+}
+
+interface FileHistory {
+  back: FileHistoryEntry[];
+  forward: FileHistoryEntry[];
+}
+
+const FILE_HISTORY_LIMIT = 50;
+
 export interface ThreadPanelVisibility {
   inlineOpen: boolean;
   popoverOpen: boolean;
@@ -115,6 +131,8 @@ interface RightPanelStoreState {
   threadPanelVisibilityByThreadKey: Record<string, ThreadPanelVisibility>;
   userActionRevisionByThreadKey: Record<string, number>;
   closeRevisionByThreadKey: Record<string, number>;
+  /** In memory only: back/forward through file navigations, never persisted. */
+  fileHistoryByThreadKey: Record<string, FileHistory>;
   getUserActionRevision: (ref: ScopedThreadRef) => number;
   markUserAction: (ref: ScopedThreadRef) => number;
   /** Refused if the user chose a panel after expectedUserActionRevision was read. */
@@ -134,7 +152,13 @@ interface RightPanelStoreState {
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
-  openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  /** recordHistory: false keeps restores (reopening a closed view) out of the file history. */
+  openFile: (
+    ref: ScopedThreadRef,
+    relativePath: string,
+    line?: number,
+    options?: { recordHistory?: boolean },
+  ) => void;
   /** Moves in place; "" opens the root explorer. folderTrail keeps the return path; keepSource opens beside the source. */
   navigateFolder: (
     ref: ScopedThreadRef,
@@ -143,7 +167,14 @@ interface RightPanelStoreState {
     folderTrail: string,
     keepSource?: boolean,
   ) => void;
-  openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
+  openAttachment: (
+    ref: ScopedThreadRef,
+    attachment: ChatFileAttachment,
+    options?: { recordHistory?: boolean },
+  ) => void;
+  /** Returns whether the panel changed. */
+  fileHistoryBack: (ref: ScopedThreadRef) => boolean;
+  fileHistoryForward: (ref: ScopedThreadRef) => boolean;
   openPullRequest: (
     ref: ScopedThreadRef,
     target: {
@@ -476,6 +507,106 @@ const closeAction = (
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
 ): Partial<RightPanelStoreState> => userAction(state, threadKey, updater, true);
 
+const isFileKindSurface = (surface: RightPanelSurface): surface is FileKindSurface =>
+  surface.kind === "files" || surface.kind === "file";
+
+const fileHistoryEntry = (current: ThreadRightPanelState): FileHistoryEntry => ({
+  isOpen: current.isOpen,
+  activeSurfaceId: current.activeSurfaceId,
+  surfaces: current.surfaces.flatMap((surface, index) =>
+    isFileKindSurface(surface) ? [{ index, surface }] : [],
+  ),
+});
+
+const sameFileHistoryEntry = (left: FileHistoryEntry, right: FileHistoryEntry) =>
+  left.isOpen === right.isOpen &&
+  left.activeSurfaceId === right.activeSurfaceId &&
+  left.surfaces.length === right.surfaces.length &&
+  left.surfaces.every(
+    (entry, i) =>
+      entry.index === right.surfaces[i]!.index &&
+      entry.surface.id === right.surfaces[i]!.surface.id,
+  );
+
+const recordFileNavigation = (
+  state: RightPanelStoreState,
+  threadKey: string,
+  update: Partial<RightPanelStoreState>,
+  record = true,
+): Partial<RightPanelStoreState> => {
+  const before = fileHistoryEntry(state.byThreadKey[threadKey] ?? EMPTY_THREAD_STATE);
+  const after = fileHistoryEntry(update.byThreadKey?.[threadKey] ?? EMPTY_THREAD_STATE);
+  if (!record || sameFileHistoryEntry(before, after)) return update;
+  const back = state.fileHistoryByThreadKey[threadKey]?.back ?? [];
+  return {
+    ...update,
+    fileHistoryByThreadKey: {
+      ...state.fileHistoryByThreadKey,
+      [threadKey]: { back: [...back, before].slice(-FILE_HISTORY_LIMIT), forward: [] },
+    },
+  };
+};
+
+// Only file-kind surfaces move; terminals, previews, PRs, diffs and devices stay as they are.
+const restoreFileHistoryEntry = (
+  current: ThreadRightPanelState,
+  entry: FileHistoryEntry,
+): ThreadRightPanelState => {
+  const surfaces: RightPanelSurface[] = current.surfaces.filter(
+    (surface) => !isFileKindSurface(surface),
+  );
+  for (const { index, surface } of entry.surfaces) {
+    // Keep a still-open tab's current state so an old reveal request does not replay.
+    const live = current.surfaces.find((existing) => existing.id === surface.id) ?? surface;
+    surfaces.splice(Math.min(index, surfaces.length), 0, live);
+  }
+  const has = (id: string | null) => surfaces.some((surface) => surface.id === id);
+  const next: ThreadRightPanelState = {
+    ...current,
+    isOpen: entry.isOpen && surfaces.length > 0,
+    surfaces,
+    activeSurfaceId: has(entry.activeSurfaceId)
+      ? entry.activeSurfaceId
+      : has(current.activeSurfaceId)
+        ? current.activeSurfaceId
+        : (surfaces.at(-1)?.id ?? null),
+  };
+  return sameFileHistoryEntry(fileHistoryEntry(current), fileHistoryEntry(next)) ? current : next;
+};
+
+// Restores go through userAction, not closeAction, so dropped tabs never reach closedViewStore.
+const stepFileHistory = (
+  state: RightPanelStoreState,
+  threadKey: string,
+  direction: "back" | "forward",
+): Partial<RightPanelStoreState> | null => {
+  const history = state.fileHistoryByThreadKey[threadKey];
+  if (!history) return null;
+  const from = direction === "back" ? history.back : history.forward;
+  const current = state.byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
+  // Entries the user already undid by hand restore nothing; skip past them.
+  for (let i = from.length - 1; i >= 0; i -= 1) {
+    const next = restoreFileHistoryEntry(current, from[i]!);
+    if (next === current) continue;
+    const remaining = from.slice(0, i);
+    const opposite = [
+      ...(direction === "back" ? history.forward : history.back),
+      fileHistoryEntry(current),
+    ].slice(-FILE_HISTORY_LIMIT);
+    return {
+      ...userAction(state, threadKey, () => next),
+      fileHistoryByThreadKey: {
+        ...state.fileHistoryByThreadKey,
+        [threadKey]:
+          direction === "back"
+            ? { back: remaining, forward: opposite }
+            : { back: opposite, forward: remaining },
+      },
+    };
+  }
+  return null;
+};
+
 function normalizeRevealLine(line: number | undefined): number | null {
   if (line === undefined || !Number.isFinite(line)) return null;
   return Math.max(1, Math.trunc(line));
@@ -647,6 +778,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       threadPanelVisibilityByThreadKey: {},
       userActionRevisionByThreadKey: {},
       closeRevisionByThreadKey: {},
+      fileHistoryByThreadKey: {},
       getUserActionRevision: (ref) =>
         get().userActionRevisionByThreadKey[scopedThreadKey(ref)] ?? 0,
       markUserAction: (ref) => {
@@ -812,79 +944,111 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             ),
           }));
         }),
-      openFile: (ref, requestedPath, line) =>
+      openFile: (ref, requestedPath, line, options) =>
         set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
-            if (requestedPath === ".") {
-              return upsertSurface(current, singletonSurface("files"));
-            }
-            // Workspace entry paths use '/', including on Windows.
-            const relativePath = /^[A-Za-z]:\/+$/.test(requestedPath)
-              ? requestedPath
-              : requestedPath.replace(/\/+$/, "") || requestedPath;
-            const withoutStandaloneExplorer = current.surfaces.filter(
-              (surface) => surface.kind !== "files",
-            );
-            const surfaceId = `file:${relativePath}` as const;
-            const existing = withoutStandaloneExplorer.find(
-              (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
-                surface.id === surfaceId && surface.kind === "file",
-            );
-            const surface = fileSurface(
-              relativePath,
-              normalizeRevealLine(line),
-              (existing?.revealRequestId ?? 0) + 1,
-            );
-            return {
-              ...current,
-              isOpen: true,
-              activeSurfaceId: surface.id,
-              surfaces: existing
-                ? withoutStandaloneExplorer.map((entry) =>
-                    entry.id === surface.id ? surface : entry,
-                  )
-                : [...withoutStandaloneExplorer, surface],
-            };
-          }),
+          recordFileNavigation(
+            state,
+            scopedThreadKey(ref),
+            userAction(state, scopedThreadKey(ref), (current) => {
+              if (requestedPath === ".") {
+                return upsertSurface(current, singletonSurface("files"));
+              }
+              // Workspace entry paths use '/', including on Windows.
+              const relativePath = /^[A-Za-z]:\/+$/.test(requestedPath)
+                ? requestedPath
+                : requestedPath.replace(/\/+$/, "") || requestedPath;
+              const withoutStandaloneExplorer = current.surfaces.filter(
+                (surface) => surface.kind !== "files",
+              );
+              const surfaceId = `file:${relativePath}` as const;
+              const existing = withoutStandaloneExplorer.find(
+                (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
+                  surface.id === surfaceId && surface.kind === "file",
+              );
+              const surface = fileSurface(
+                relativePath,
+                normalizeRevealLine(line),
+                (existing?.revealRequestId ?? 0) + 1,
+              );
+              return {
+                ...current,
+                isOpen: true,
+                activeSurfaceId: surface.id,
+                surfaces: existing
+                  ? withoutStandaloneExplorer.map((entry) =>
+                      entry.id === surface.id ? surface : entry,
+                    )
+                  : [...withoutStandaloneExplorer, surface],
+              };
+            }),
+            options?.recordHistory !== false,
+          ),
         ),
       navigateFolder: (ref, surfaceId, relativePath, folderTrail, keepSource = false) =>
         set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
-            const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
-            if (index < 0) return current;
-            const trail = folderTrail === relativePath ? {} : { folderTrail };
-            const target: RightPanelSurface =
-              relativePath === ""
-                ? { ...singletonSurface("files"), ...trail }
-                : { ...fileSurface(relativePath, null, 1), ...trail };
-            const source = current.surfaces[index]!;
-            const existing = current.surfaces.some(
-              (surface, i) => i !== index && surface.id === target.id,
-            );
-            const surfaces = current.surfaces.flatMap((surface, i) => {
-              if (i === index) {
-                const kept = keepSource ? [source] : [];
-                return existing ? kept : [...kept, target];
-              }
-              return !existing && target.kind === "file" && surface.kind === "files"
-                ? []
-                : [surface];
-            });
-            return { ...current, isOpen: true, activeSurfaceId: target.id, surfaces };
-          }),
+          recordFileNavigation(
+            state,
+            scopedThreadKey(ref),
+            userAction(state, scopedThreadKey(ref), (current) => {
+              const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
+              if (index < 0) return current;
+              const trail = folderTrail === relativePath ? {} : { folderTrail };
+              const target: RightPanelSurface =
+                relativePath === ""
+                  ? { ...singletonSurface("files"), ...trail }
+                  : { ...fileSurface(relativePath, null, 1), ...trail };
+              const source = current.surfaces[index]!;
+              const existing = current.surfaces.some(
+                (surface, i) => i !== index && surface.id === target.id,
+              );
+              const surfaces = current.surfaces.flatMap((surface, i) => {
+                if (i === index) {
+                  const kept = keepSource ? [source] : [];
+                  return existing ? kept : [...kept, target];
+                }
+                return !existing && target.kind === "file" && surface.kind === "files"
+                  ? []
+                  : [surface];
+              });
+              return { ...current, isOpen: true, activeSurfaceId: target.id, surfaces };
+            }),
+          ),
         ),
-      openAttachment: (ref, attachment) =>
+      openAttachment: (ref, attachment, options) =>
         set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
-            const withoutStandaloneExplorer = current.surfaces.filter(
-              (surface) => surface.kind !== "files",
-            );
-            return upsertSurface(
-              { ...current, surfaces: withoutStandaloneExplorer },
-              attachmentSurface(attachment),
-            );
-          }),
+          recordFileNavigation(
+            state,
+            scopedThreadKey(ref),
+            userAction(state, scopedThreadKey(ref), (current) => {
+              const withoutStandaloneExplorer = current.surfaces.filter(
+                (surface) => surface.kind !== "files",
+              );
+              return upsertSurface(
+                { ...current, surfaces: withoutStandaloneExplorer },
+                attachmentSurface(attachment),
+              );
+            }),
+            options?.recordHistory !== false,
+          ),
         ),
+      fileHistoryBack: (ref) => {
+        let moved = false;
+        set((state) => {
+          const update = stepFileHistory(state, scopedThreadKey(ref), "back");
+          moved = update !== null;
+          return update ?? state;
+        });
+        return moved;
+      },
+      fileHistoryForward: (ref) => {
+        let moved = false;
+        set((state) => {
+          const update = stepFileHistory(state, scopedThreadKey(ref), "forward");
+          moved = update !== null;
+          return update ?? state;
+        });
+        return moved;
+      },
       openTerminal: (ref, terminalId) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) =>
@@ -1168,7 +1332,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             !(threadKey in state.byThreadKey) &&
             !(threadKey in state.threadPanelVisibilityByThreadKey) &&
             !(threadKey in state.userActionRevisionByThreadKey) &&
-            !(threadKey in state.closeRevisionByThreadKey)
+            !(threadKey in state.closeRevisionByThreadKey) &&
+            !(threadKey in state.fileHistoryByThreadKey)
           ) {
             return state;
           }
@@ -1179,11 +1344,14 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             state.userActionRevisionByThreadKey;
           const { [threadKey]: _closeRevision, ...closeRevisionByThreadKey } =
             state.closeRevisionByThreadKey;
+          const { [threadKey]: _fileHistory, ...fileHistoryByThreadKey } =
+            state.fileHistoryByThreadKey;
           return {
             byThreadKey,
             threadPanelVisibilityByThreadKey,
             userActionRevisionByThreadKey,
             closeRevisionByThreadKey,
+            fileHistoryByThreadKey,
           };
         }),
     }),

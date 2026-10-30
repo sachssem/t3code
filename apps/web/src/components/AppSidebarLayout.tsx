@@ -39,6 +39,7 @@ import {
 } from "../panelAnimations";
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
+import { focusedFileViewerThreadRef, restoreFileViewerFocus } from "./files/fileViewerHistory";
 import ThreadSidebar from "./Sidebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 import { isAppModalPage } from "./sidebar/mainAppLocation";
@@ -153,12 +154,21 @@ export function registerNavigationHistoryCommands(router: AnyRouter): () => void
       "navigation.back": (event) => {
         event.preventDefault();
         event.stopPropagation();
-        window.history.back();
+        // Inside the file viewer the key steps its history, even when empty, never the thread route.
+        const fileViewerThreadRef = focusedFileViewerThreadRef();
+        if (fileViewerThreadRef) {
+          useRightPanelStore.getState().fileHistoryBack(fileViewerThreadRef);
+          restoreFileViewerFocus(fileViewerThreadRef);
+        } else window.history.back();
       },
       "navigation.forward": (event) => {
         event.preventDefault();
         event.stopPropagation();
-        window.history.forward();
+        const fileViewerThreadRef = focusedFileViewerThreadRef();
+        if (fileViewerThreadRef) {
+          useRightPanelStore.getState().fileHistoryForward(fileViewerThreadRef);
+          restoreFileViewerFocus(fileViewerThreadRef);
+        } else window.history.forward();
       },
     },
     {

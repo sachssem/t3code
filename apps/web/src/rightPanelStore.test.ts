@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
@@ -27,6 +27,7 @@ beforeEach(() => {
     threadPanelVisibilityByThreadKey: {},
     userActionRevisionByThreadKey: {},
     closeRevisionByThreadKey: {},
+    fileHistoryByThreadKey: {},
   });
 });
 
@@ -1308,5 +1309,132 @@ describe("rightPanelStore", () => {
     store.reconcileBrowserSurfaces(refA, ["tab-a", "tab-b"]);
     expect(surfaceIds()).toEqual(["browser:tab-a", "terminal:term-1", "diff", "browser:tab-b"]);
     expect(store.getUserActionRevision(refA)).toBe(revision);
+  });
+});
+
+describe("file viewer history", () => {
+  const panel = () => selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+  const view = () => {
+    const { isOpen, activeSurfaceId, surfaces } = panel();
+    return { isOpen, activeSurfaceId, ids: surfaces.map((surface) => surface.id) };
+  };
+
+  it("returns from a file opened in the explorer to the explorer", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "files");
+    store.openFile(refA, "src/app.ts");
+    expect(view().ids).toEqual(["file:src/app.ts"]);
+
+    expect(store.fileHistoryBack(refA)).toBe(true);
+    expect(view()).toEqual({ isOpen: true, activeSurfaceId: "files", ids: ["files"] });
+    expect(store.fileHistoryBack(refA)).toBe(false);
+  });
+
+  it("closes the panel again for a file opened while it was closed", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "src/app.ts");
+
+    expect(store.fileHistoryBack(refA)).toBe(true);
+    expect(view()).toEqual({ isOpen: false, activeSurfaceId: null, ids: [] });
+  });
+
+  it("keeps an already-open tab and re-activates what was active before", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "src/app.ts");
+    store.open(refA, "diff");
+    store.openFile(refA, "src/app.ts", 12);
+    expect(view().activeSurfaceId).toBe("file:src/app.ts");
+
+    store.fileHistoryBack(refA);
+    expect(view()).toEqual({
+      isOpen: true,
+      activeSurfaceId: "diff",
+      ids: ["file:src/app.ts", "diff"],
+    });
+  });
+
+  it("redoes with forward and drops the forward stack on a new navigation", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "files");
+    store.openFile(refA, "src/a.ts");
+    store.openFile(refA, "src/b.ts");
+    store.fileHistoryBack(refA);
+    store.fileHistoryBack(refA);
+    expect(view().ids).toEqual(["files"]);
+
+    expect(store.fileHistoryForward(refA)).toBe(true);
+    expect(view()).toEqual({
+      isOpen: true,
+      activeSurfaceId: "file:src/a.ts",
+      ids: ["file:src/a.ts"],
+    });
+    store.openFile(refA, "src/c.ts");
+    expect(store.fileHistoryForward(refA)).toBe(false);
+    store.fileHistoryBack(refA);
+    expect(view().activeSurfaceId).toBe("file:src/a.ts");
+  });
+
+  it("brings back a surface that a folder navigation replaced in place", () => {
+    const store = useRightPanelStore.getState();
+    store.openBrowser(refA, "tab-1");
+    store.openFile(refA, "docs/guide.md");
+    store.navigateFolder(refA, "file:docs/guide.md", "docs/setup.md", "docs/setup.md");
+    expect(view().ids).toEqual(["browser:tab-1", "file:docs/setup.md"]);
+
+    store.fileHistoryBack(refA);
+    expect(view()).toEqual({
+      isOpen: true,
+      activeSurfaceId: "file:docs/guide.md",
+      ids: ["browser:tab-1", "file:docs/guide.md"],
+    });
+  });
+
+  it("leaves non-file tabs alone and restores file tabs at their positions", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "src/a.ts");
+    store.openTerminal(refA, "term-1");
+    store.openFile(refA, "src/b.ts");
+    store.open(refA, "diff");
+    store.navigateFolder(refA, "file:src/a.ts", "src/c.ts", "src/c.ts");
+
+    store.fileHistoryBack(refA);
+    expect(view().ids).toEqual(["file:src/a.ts", "terminal:term-1", "file:src/b.ts", "diff"]);
+    store.fileHistoryBack(refA);
+    expect(view().ids).toEqual(["file:src/a.ts", "terminal:term-1", "diff"]);
+    expect(view().activeSurfaceId).toBe("terminal:term-1");
+  });
+
+  it("does not record a reopened closed view", async () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "src/app.ts");
+    store.closeSurface(refA, "file:src/app.ts");
+    await reopenClosedView(useClosedViewStore.getState().entries[0]!, {
+      workspaceAvailable: true,
+      openPreview: () => {
+        throw new Error("A file tab must not create a browser session");
+      },
+    });
+    expect(view().ids).toEqual(["file:src/app.ts"]);
+    expect(useRightPanelStore.getState().fileHistoryByThreadKey).toEqual({
+      [scopedThreadKey(refA)]: { back: [expect.anything()], forward: [] },
+    });
+  });
+
+  it("does not feed closed tabs to the reopen stack", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "files");
+    store.openFile(refA, "src/a.ts");
+    store.openFile(refA, "src/b.ts");
+    store.fileHistoryBack(refA);
+    store.fileHistoryBack(refA);
+    store.fileHistoryForward(refA);
+    expect(useClosedViewStore.getState().entries).toEqual([]);
+  });
+
+  it("is dropped with its thread", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "src/app.ts");
+    store.removeThread(refA);
+    expect(useRightPanelStore.getState().fileHistoryByThreadKey).toEqual({});
   });
 });
