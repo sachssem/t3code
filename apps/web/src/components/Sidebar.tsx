@@ -175,6 +175,7 @@ import {
 import {
   applySidebarThreadDrop,
   collapsedShelfThreads,
+  withoutHiddenSettledThreads,
   hasUnseenCompletion,
   resolveThreadLastVisitedAt,
   filterSidebarV2VisibleThreads,
@@ -443,6 +444,7 @@ function useSidebarThreads(input: {
   // Folders already separate the work, so boring mode has no Working shelf.
   const workingShelfEnabled =
     useClientSettings((s) => s.sidebarWorkingShelfEnabled) && folderGroups === null;
+  const hiddenSettledTitlePrefixes = useClientSettings((s) => s.sidebarSettledHiddenTitlePrefixes);
   const inboxReturnsVersion = useSyncExternalStore(
     inboxReturns.subscribe,
     inboxReturns.getSnapshot,
@@ -491,8 +493,12 @@ function useSidebarThreads(input: {
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
   });
 
-  const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
-    partition;
+  const { pinnedThreads, activeThreads, workingThreads, snoozedThreads } = partition;
+  const settledThreads = withoutHiddenSettledThreads(
+    partition.settledThreads,
+    hiddenSettledTitlePrefixes,
+    routeRowThreadKey,
+  );
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
     scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
@@ -575,12 +581,13 @@ function useSidebarThreads(input: {
     [activeThreads, "active"],
     [workingThreads, "working"],
     [snoozedThreads, "snoozed"],
-    [settledThreads, "settled"],
+    [partition.settledThreads, "settled"],
   ] as const) {
     for (const thread of list) sectionByThreadKey.set(threadShellKey(thread), section);
   }
   return {
     ...partition,
+    settledThreads,
     threads,
     workingShelfEnabled,
     searchableThreads: [
@@ -588,7 +595,7 @@ function useSidebarThreads(input: {
       ...activeThreads,
       ...workingThreads,
       ...snoozedThreads,
-      ...settledThreads,
+      ...partition.settledThreads,
     ],
     settledVisibleCount,
     settledCount,

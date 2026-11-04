@@ -811,6 +811,20 @@ function hasUnseenFailure(thread: ThreadStatusInput): boolean {
 
 const NO_THREADS: readonly never[] = [];
 
+// Hidden rows stay reachable through search, and the open one stays until navigation.
+export function withoutHiddenSettledThreads<
+  T extends { environmentId: EnvironmentId; id: ThreadId; title: string },
+>(threads: readonly T[], hiddenTitlePrefixes: readonly string[], routeThreadKey: string | null) {
+  const prefixes = hiddenTitlePrefixes.map((prefix) => prefix.trim()).filter(Boolean);
+  if (prefixes.length === 0) return threads;
+  const shown = threads.filter(
+    (thread) =>
+      !prefixes.some((prefix) => thread.title.trimStart().startsWith(prefix)) ||
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+  );
+  return shown.length === threads.length ? threads : shown;
+}
+
 // Keep the open row until navigation, even when reading it clears its unread mark.
 export function collapsedShelfThreads<T extends { environmentId: EnvironmentId; id: ThreadId }>(
   threads: readonly T[],

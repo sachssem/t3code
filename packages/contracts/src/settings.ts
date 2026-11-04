@@ -402,6 +402,12 @@ export const DEFAULT_DIFF_COLLAPSE_PATH_PATTERNS: ReadonlyArray<string> = [
   "[a-z0-9](Tests?|Spec)\\.[^/.]+$",
 ];
 
+/** Titles the automated watcher and daily review threads start with. */
+const DEFAULT_SIDEBAR_SETTLED_HIDDEN_TITLE_PREFIXES: ReadonlyArray<string> = [
+  "Thread-Wächter",
+  "Thread-Rückblick",
+];
+
 /** Apply renamed preferences before schema defaults can hide the legacy values. */
 export function migrateLegacyClientSettings(stored: unknown): unknown {
   if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return stored;
@@ -577,6 +583,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarSettledHiddenTitlePrefixes: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_SETTLED_HIDDEN_TITLE_PREFIXES)),
+  ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -2089,6 +2098,7 @@ export const ClientSettingsPatch = Schema.Struct({
   threadDetailsUsageEnabled: Schema.optionalKey(Schema.Boolean),
   threadDetailsItems: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
+  sidebarSettledHiddenTitlePrefixes: Schema.optionalKey(Schema.Array(Schema.String)),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),
