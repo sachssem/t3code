@@ -488,6 +488,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
   },
   {
+    id: "sidebar-settled-hidden-title-prefixes",
+    title: msg("Hide settled threads titled"),
+    to: "/settings/general",
+    searchTerms: [msg("hide filter prefix title settled done watcher automated bots sidebar")],
+  },
+  {
     id: "boring-sidebar",
     title: msg("Boring sidebar (group by project)"),
     to: "/settings/labs",

@@ -10,6 +10,7 @@ import { AsyncResult } from "effect/reactivity";
 import {
   shouldCreateNewThreadInCurrentProject,
   collapsedShelfThreads,
+  withoutHiddenSettledThreads,
   resolveThreadLastVisitedAt,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
@@ -1733,6 +1734,19 @@ describe("collapsedShelfThreads", () => {
   it("distinguishes the same thread id in different environments", () => {
     const remote = { ...shelf[0]!, environmentId: EnvironmentId.make("remote") };
     expect(collapsedShelfThreads([...shelf, remote], keyOf("t1"))).toEqual([shelf[0]]);
+  });
+
+  it("hides settled threads by title prefix except the open one", () => {
+    const titled = [
+      { ...shelf[0]!, title: "Thread-Wächter 09:00" },
+      { ...shelf[1]!, title: "Fix login" },
+      { ...shelf[2]!, title: "  Thread-Rückblick 2026-11-03" },
+    ];
+    const prefixes = ["Thread-Wächter", "Thread-Rückblick", " "];
+    expect(ids(withoutHiddenSettledThreads(titled, prefixes, null))).toEqual(["t2"]);
+    expect(ids(withoutHiddenSettledThreads(titled, prefixes, keyOf("t3")))).toEqual(["t2", "t3"]);
+    expect(withoutHiddenSettledThreads(titled, [], null)).toBe(titled);
+    expect(withoutHiddenSettledThreads(titled, ["Other"], null)).toBe(titled);
   });
 
   it("uses server visits for unread visibility, including mark-unread rewinds", () => {

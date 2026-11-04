@@ -534,6 +534,12 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? [gt("Working section")]
       : []),
+    ...(!Equal.equals(
+      settings.sidebarSettledHiddenTitlePrefixes,
+      DEFAULT_UNIFIED_SETTINGS.sidebarSettledHiddenTitlePrefixes,
+    )
+      ? [gt("Hide settled threads titled")]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? [gt("Auto-settle inactive threads")]
       : []),
@@ -750,6 +756,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarSettledHiddenTitlePrefixes: DEFAULT_UNIFIED_SETTINGS.sidebarSettledHiddenTitlePrefixes,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -851,6 +858,55 @@ function AutoSettleDaysInput({
       }}
       aria-label={gt("Days of inactivity before auto-settle")}
     />
+  );
+}
+
+function SettledHiddenTitlePrefixesRow() {
+  const gt = useGT();
+  const setting = useSearchableSetting();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const prefixes = settings.sidebarSettledHiddenTitlePrefixes;
+  const text = prefixes.join("\n");
+  return (
+    <SettingsRow
+      {...setting("sidebar-settled-hidden-title-prefixes")}
+      description={gt(
+        "Leave settled threads whose title starts with one of these out of the Settled section. Search still finds them, and threads that need you stay in the inbox. One per line; leave empty to show all.",
+      )}
+      resetAction={
+        !Equal.equals(prefixes, DEFAULT_UNIFIED_SETTINGS.sidebarSettledHiddenTitlePrefixes) ? (
+          <SettingResetButton
+            ariaLabel={gt("Reset hidden settled titles to default")}
+            onClick={() =>
+              updateSettings({
+                sidebarSettledHiddenTitlePrefixes:
+                  DEFAULT_UNIFIED_SETTINGS.sidebarSettledHiddenTitlePrefixes,
+              })
+            }
+          />
+        ) : null
+      }
+    >
+      <div className="mt-3 max-w-2xl pb-3.5">
+        <Textarea
+          key={text}
+          defaultValue={text}
+          onBlur={(event) => {
+            const next = event.target.value
+              .split("\n")
+              .map((line) => line.trim())
+              .filter((line) => line.length > 0);
+            if (!Equal.equals(next, prefixes)) {
+              updateSettings({ sidebarSettledHiddenTitlePrefixes: next });
+            }
+          }}
+          rows={Math.min(Math.max(prefixes.length, 2), 6)}
+          spellCheck={false}
+          aria-label={gt("Hide settled threads titled")}
+        />
+      </div>
+    </SettingsRow>
   );
 }
 
@@ -1050,6 +1106,7 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+        <SettledHiddenTitlePrefixesRow />
       </SettingsSection>
 
       <SettingsSection id="confirmations" title={gt("Confirmations")}>
