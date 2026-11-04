@@ -1550,13 +1550,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return Cache.get(refresh ? repositoryPathsRefreshCache : repositoryPathsCache, cacheKey);
   };
 
-  const readGeneratedPaths: GitVcsDriver.GitVcsDriver["Service"]["readGeneratedPaths"] = Effect.fn(
-    "GitVcsDriver.readGeneratedPaths",
-  )(function* (cwd, relativePaths) {
+  const readGeneratedPathsAtRoot = Effect.fn("GitVcsDriver.readGeneratedPathsAtRoot")(function* (
+    root: string,
+    relativePaths: ReadonlyArray<string>,
+  ) {
     const unique = [...new Set(relativePaths)];
     if (unique.length === 0) return [];
-    const root = (yield* resolveRepositoryPaths(cwd))?.worktreeRoot;
-    if (!root) return [];
     // Read in one batch so nested attributes and local overrides apply without a stale cache.
     const stdin = `${unique.join("\0")}\0`;
     const result = yield* executeGit(
@@ -1566,6 +1565,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { stdin, timeoutMs: 20_000, maxOutputBytes: Buffer.byteLength(stdin) + unique.length * 64 },
     );
     return parseGeneratedCheckAttr(result.stdout);
+  });
+  const readGeneratedPaths: GitVcsDriver.GitVcsDriver["Service"]["readGeneratedPaths"] = Effect.fn(
+    "GitVcsDriver.readGeneratedPaths",
+  )(function* (cwd, relativePaths) {
+    if (relativePaths.length === 0) return [];
+    const root = (yield* resolveRepositoryPaths(cwd))?.worktreeRoot;
+    return root ? yield* readGeneratedPathsAtRoot(root, relativePaths) : [];
   });
 
   const defaultBranchCache = yield* Cache.makeWith(
@@ -3503,7 +3509,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { maxOutputBytes: patchLimit, appendTruncationMarker: true },
       );
       const diffHash = yield* hashDiff(patch.stdout, files);
-      const generatedPaths = yield* readGeneratedPaths(
+      const generatedPaths = yield* readGeneratedPathsAtRoot(
         cwd,
         files.map((file) => file.path),
       ).pipe(Effect.orElseSucceed(() => []));
@@ -3613,7 +3619,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ]);
 
     const generated = new Set(
-      yield* readGeneratedPaths(
+      yield* readGeneratedPathsAtRoot(
         cwd,
         [...(dirtyFiles ?? []), ...(baseFiles ?? [])].map((file) => file.path),
       ).pipe(Effect.orElseSucceed(() => [])),

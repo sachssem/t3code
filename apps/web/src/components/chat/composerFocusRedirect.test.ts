@@ -12,6 +12,7 @@ function setup() {
     selector === "[data-pull-request-viewed-shortcut] diffs-container:hover" ? hoveredFile : null,
   );
   vi.stubGlobal("document", { querySelector });
+  vi.stubGlobal("Element", class Element extends EventTarget {});
   return {
     querySelector,
     [Symbol.dispose]: () => vi.unstubAllGlobals(),
