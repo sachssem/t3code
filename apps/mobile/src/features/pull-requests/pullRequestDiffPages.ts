@@ -1,4 +1,7 @@
-import { orderDiffFilesForReview } from "@t3tools/client-runtime/diff-file-order";
+import {
+  orderDiffFilesForReview,
+  orderDiffFilesByKind,
+} from "@t3tools/client-runtime/diff-file-order";
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import type { PullRequestDiffResult } from "@t3tools/contracts";
@@ -119,9 +122,14 @@ export function combinePullRequestDiffPages(
     cache.set(page.result, value);
     return value;
   });
-  const files = orderDiffFilesForReview(
+  const treeOrderedFiles = orderDiffFilesForReview(
     parsed.flatMap((page) => (page.kind === "files" ? page.files : [])),
     (file) => file.path,
+  );
+  const files = orderDiffFilesByKind(
+    treeOrderedFiles,
+    (file) => file.path,
+    new Set(pages.flatMap((page) => page.result.generatedPaths ?? [])),
   );
   if (files.length === 0) return parsed[0] ?? { kind: "empty" };
   return {

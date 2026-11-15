@@ -1,3 +1,5 @@
+import { classifyChangedFile, isTestChangedFile } from "@t3tools/shared/changedFileKind";
+
 interface OrderableDiffFile {
   readonly additionLines: ReadonlyArray<string>;
   readonly deletionLines: ReadonlyArray<string>;
@@ -247,4 +249,22 @@ export function orderDiffFilesForReview<F extends OrderableDiffFile>(
   pathOf: (file: F) => string,
 ): ReadonlyArray<F> {
   return orderLikeTree(orderByImportsAndTier(files, pathOf), pathOf);
+}
+
+// Keeps the incoming (tree) order inside each kind, so real changes come first, tests after
+// them and generated files last; both kinds start folded and only crowd the files above.
+export function orderDiffFilesByKind<F>(
+  files: ReadonlyArray<F>,
+  pathOf: (file: F) => string,
+  generatedPaths: ReadonlySet<string>,
+): ReadonlyArray<F> {
+  const rank = (file: F) => {
+    const path = pathOf(file);
+    if (generatedPaths.has(path) || classifyChangedFile(path) === "generated") return 2;
+    return isTestChangedFile(path) ? 1 : 0;
+  };
+  return files
+    .map((file) => ({ file, rank: rank(file) }))
+    .sort((left, right) => left.rank - right.rank)
+    .map(({ file }) => file);
 }

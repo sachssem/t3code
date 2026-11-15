@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { orderDiffFilesForReview } from "./diffFileOrder.ts";
+import { orderDiffFilesForReview, orderDiffFilesByKind } from "./diffFileOrder.ts";
 
 interface TestFile {
   readonly name: string;
@@ -212,6 +212,35 @@ describe("orderDiffFilesForReview", () => {
       "src/a.logic.test.ts",
       "src/b.test.ts",
       "src/c.browser.test.tsx",
+    ]);
+  });
+});
+
+describe("orderDiffFilesByKind", () => {
+  it("moves tests behind real changes and generated files to the end, keeping order inside each", () => {
+    const paths = [
+      "src/a.ts",
+      "src/a.test.ts",
+      "src/i18n/de.json",
+      "src/b.ts",
+      "pnpm-lock.yaml",
+      "tests/b.ts",
+      "src/c.ts",
+    ];
+    expect(
+      orderDiffFilesByKind(
+        paths.map((path) => file(path)),
+        (entry) => entry.name,
+        new Set(["src/i18n/de.json"]),
+      ).map((entry) => entry.name),
+    ).toEqual([
+      "src/a.ts",
+      "src/b.ts",
+      "src/c.ts",
+      "src/a.test.ts",
+      "tests/b.ts",
+      "src/i18n/de.json",
+      "pnpm-lock.yaml",
     ]);
   });
 });
