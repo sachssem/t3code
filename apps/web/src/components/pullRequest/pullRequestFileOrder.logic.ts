@@ -1,5 +1,8 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 
+import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
+
+import { isGeneratedDiffFile } from "~/lib/diffCollapse";
 import { resolveFileDiffPath } from "~/lib/diffRendering";
 
 export type DiffFileTier = "source" | "test" | "generated";
@@ -179,4 +182,21 @@ export function orderDiffFiles(
     .sort((left, right) => left.localeCompare(right));
 
   return [...orderedSource, ...orderedTests, ...orderedGenerated].map((path) => byPath.get(path)!);
+}
+
+// Keeps the incoming (tree) order inside each kind, so real changes come first, tests after
+// them and generated files last; both kinds start folded and only crowd the files above.
+export function orderDiffFilesByKind(
+  files: ReadonlyArray<FileDiffMetadata>,
+  generatedPaths: ReadonlySet<string>,
+): ReadonlyArray<FileDiffMetadata> {
+  const rank = (file: FileDiffMetadata) => {
+    const path = resolveFileDiffPath(file);
+    if (isGeneratedDiffFile(path, generatedPaths)) return 2;
+    return isTestChangedFile(path) ? 1 : 0;
+  };
+  return files
+    .map((file) => ({ file, rank: rank(file) }))
+    .toSorted((left, right) => left.rank - right.rank)
+    .map(({ file }) => file);
 }

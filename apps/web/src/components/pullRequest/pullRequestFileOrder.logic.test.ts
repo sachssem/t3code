@@ -1,7 +1,7 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { orderDiffFiles } from "./pullRequestFileOrder.logic";
+import { orderDiffFiles, orderDiffFilesByKind } from "./pullRequestFileOrder.logic";
 
 function file(name: string, additionLines: ReadonlyArray<string> = []): FileDiffMetadata {
   return { name, hunks: [], additionLines, deletionLines: [] } as unknown as FileDiffMetadata;
@@ -136,6 +136,34 @@ describe("orderDiffFiles", () => {
       "src/a.logic.test.ts",
       "src/b.test.ts",
       "src/c.browser.test.tsx",
+    ]);
+  });
+});
+
+describe("orderDiffFilesByKind", () => {
+  it("moves tests behind real changes and generated files to the end, keeping order inside each", () => {
+    const paths = [
+      "src/a.ts",
+      "src/a.test.ts",
+      "src/i18n/de.json",
+      "src/b.ts",
+      "pnpm-lock.yaml",
+      "tests/b.ts",
+      "src/c.ts",
+    ];
+    expect(
+      orderDiffFilesByKind(
+        paths.map((path) => file(path)),
+        new Set(["src/i18n/de.json"]),
+      ).map((entry) => entry.name),
+    ).toEqual([
+      "src/a.ts",
+      "src/b.ts",
+      "src/c.ts",
+      "src/a.test.ts",
+      "tests/b.ts",
+      "src/i18n/de.json",
+      "pnpm-lock.yaml",
     ]);
   });
 });

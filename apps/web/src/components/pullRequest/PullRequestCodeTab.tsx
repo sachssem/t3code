@@ -84,7 +84,7 @@ import {
   canResolvePullRequestThread,
 } from "@t3tools/client-runtime/pull-request-editing";
 import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
-import { orderDiffFiles } from "./pullRequestFileOrder.logic";
+import { orderDiffFiles, orderDiffFilesByKind } from "./pullRequestFileOrder.logic";
 import {
   buildFileDiffRenderKey,
   fnv1a32,
@@ -237,6 +237,7 @@ function parseSlice(slice: DiffSlice, cacheKey: string, ignoreWhitespace: boolea
 type DiffModel = {
   readonly parsedSlices: ReadonlyArray<RenderablePatch | null>;
   readonly loadedFiles: ReadonlyArray<Extract<RenderablePatch, { kind: "files" }>["files"][number]>;
+  readonly treeOrderedFiles: DiffModel["loadedFiles"];
   readonly sourceFileStats: ReadonlyMap<string, ReturnType<typeof getDiffLineStat>>;
 };
 const diffModels = new WeakMap<ReadonlyArray<DiffSlice>, Map<string, DiffModel>>();
@@ -260,13 +261,18 @@ function diffModel(
     // hash: a refreshed page reuses its cursor, so position alone would return a stale parse.
     return parseSlice(slice, `${keyPrefix}:${slice.cursor ?? "first"}:${hash}`, ignoreWhitespace);
   });
+  const treeOrderedFiles = orderDiffFilesLikeTree(
+    parsedSlices.flatMap((parsed) =>
+      parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
+    ),
+  );
   const model: DiffModel = {
     parsedSlices,
-    loadedFiles: orderDiffFilesLikeTree(
-      parsedSlices.flatMap((parsed) =>
-        parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
-      ),
+    loadedFiles: orderDiffFilesByKind(
+      treeOrderedFiles,
+      new Set(slices.flatMap((slice) => slice.generatedPaths)),
     ),
+    treeOrderedFiles,
     sourceFileStats: new Map(
       parsedSlices.flatMap((parsed) =>
         parsed?.kind === "files"
@@ -589,7 +595,7 @@ function PullRequestCodeTab({
   });
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
 
-  const { parsedSlices, loadedFiles, sourceFileStats } = diffModel(
+  const { parsedSlices, loadedFiles, treeOrderedFiles, sourceFileStats } = diffModel(
     loadedSlices,
     `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`,
     ignoreWhitespace,
@@ -612,12 +618,11 @@ function PullRequestCodeTab({
     isTestChangedFile(resolveFileDiffPath(file)),
   ).length;
   // A requested file stays visible so a jump to a hidden test still lands.
-  const files = hideTestFiles
-    ? loadedFiles.filter((file) => {
-        const path = resolveFileDiffPath(file);
-        return path === revealRequest?.path || path === linkPath || !isTestChangedFile(path);
-      })
-    : loadedFiles;
+  const isFileShown = (file: (typeof loadedFiles)[number]) => {
+    const path = resolveFileDiffPath(file);
+    return path === revealRequest?.path || path === linkPath || !isTestChangedFile(path);
+  };
+  const files = hideTestFiles ? loadedFiles.filter(isFileShown) : loadedFiles;
   const hiddenTestFileCount = loadedFiles.length - files.length;
   const filePaths = files.map((file) => resolveFileDiffPath(file));
   const generatedPaths = new Set(loadedSlices.flatMap((slice) => slice.generatedPaths));
@@ -773,7 +778,9 @@ function PullRequestCodeTab({
       slice.omittedFileStats.map((file) => [file.path, file] as const),
     ),
   );
-  const fileTreeEntries = diffFileTreeEntries(files);
+  const fileTreeEntries = diffFileTreeEntries(
+    hideTestFiles ? treeOrderedFiles.filter(isFileShown) : treeOrderedFiles,
+  );
   const threadsByPath = reviewThreadsByPath(detail.reviewThreads);
   // File membership does not guarantee a rendered hunk for the thread.
   const placedThreadIds = (() => {
