@@ -905,6 +905,7 @@ const layerMakeRoutes = Layer.mergeAll(
     SpeechService.layer.pipe(
       Layer.provide(layerServerSettings),
       Layer.provide(SpeechModelStore.layer),
+      Layer.provide(ProcessRunner.layer),
     ),
   ),
   Layer.provide(CloudSpeech.layer.pipe(Layer.provide(SecretResolver.layer))),

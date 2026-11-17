@@ -304,7 +304,7 @@ function ModelCard(props: ModelCardProps) {
                 : model.benchmark
                   ? []
                   : [languageLabel(model.languages[0] ?? "", locale)]),
-              formatSize(model.size),
+              ...(model.size > 0 ? [formatSize(model.size)] : []),
             ]}
           />
           {downloading ? (
