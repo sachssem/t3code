@@ -1,7 +1,13 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The fake Handy app checks the WAV from a Node socket callback.
+import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 import { beforeEach, expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Deferred from "effect/Deferred";
 import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
@@ -13,6 +19,7 @@ import * as Exit from "effect/Exit";
 import * as PlatformError from "effect/PlatformError";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { listNativeSpeechGpuDevices } from "./native.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
@@ -113,6 +120,15 @@ const store = Layer.succeed(
 );
 const layer = SpeechService.layer.pipe(
   Layer.provide(store),
+  Layer.provide(ProcessRunner.layer),
+  // Keeps an installed Handy app on the test machine out of the model list.
+  Layer.provideMerge(
+    ConfigProvider.layer(
+      ConfigProvider.fromEnv({
+        env: { T3CODE_HANDY_BIN: "/nonexistent/handy", T3CODE_HANDY_SOCKET: "/nonexistent/sock" },
+      }),
+    ),
+  ),
   Layer.provideMerge(ServerSettings.layerTest({ speechModelId: "test-model" })),
   Layer.provide(NodeServices.layer),
 );
@@ -306,6 +322,126 @@ it.effect("rejects model mutations outside the offered registry", () =>
       (yield* speech.models(true)).models.find((model) => model.active)?.benchmark?.secondsPer30s,
     ).toEqual({ cpu: 3, accelerated: 1.2 });
   }).pipe(Effect.provide(layer)),
+);
+
+/** A fake headless binary that marks every spawn next to itself. */
+const fakeHandyBinary = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const { join } = yield* Path.Path;
+  const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-handy-test-" });
+  const binary = join(directory, "handy");
+  const spawned = join(directory, "spawned");
+  yield* fs.writeFileString(
+    binary,
+    [
+      "#!/bin/sh",
+      '[ "$1" = --transcribe-file ] && [ -s "$2" ] && [ "$3" = --json ] || exit 2',
+      `touch '${spawned}'`,
+      "echo 'INFO loading model'",
+      `echo '{"audio_secs":0.1,"model":"m","text":" from handy "}'`,
+    ].join("\n"),
+  );
+  yield* fs.chmod(binary, 0o755);
+  return { directory, binary, spawned: fs.exists(spawned) };
+});
+
+/** Answers Handy's socket protocol, one request per connection. */
+const serveFakeHandy = (path: string, prepared: Deferred.Deferred<void>) =>
+  Effect.acquireRelease(
+    Effect.callback<NodeNet.Server>((resume) => {
+      const server = NodeNet.createServer((socket) => {
+        let input = "";
+        socket.setEncoding("utf8");
+        socket.on("data", (chunk: string) => {
+          input += chunk;
+          if (!input.includes("\n")) return;
+          const request = JSON.parse(input) as { op: string; wav?: string };
+          if (request.op === "prepare") Deferred.doneUnsafe(prepared, Effect.void);
+          const reply =
+            request.op === "prepare"
+              ? { ok: true, model: "m", load_ms: 5 }
+              : request.op === "transcribe" && request.wav && NodeFS.existsSync(request.wav)
+                ? {
+                    ok: true,
+                    text: " from socket ",
+                    model: "m",
+                    load_ms: 0,
+                    transcribe_ms: 3,
+                    audio_secs: 0.1,
+                  }
+                : { ok: false, error: "bad request" };
+          socket.end(`${JSON.stringify(reply)}\n`);
+        });
+      });
+      server.listen(path, () => resume(Effect.succeed(server)));
+    }),
+    (server) => Effect.callback<void>((resume) => void server.close(() => resume(Effect.void))),
+  );
+
+const withHandyConfig =
+  (env: Record<string, string>) =>
+  <E>(effect: Effect.Effect<void, E, SpeechService.SpeechService>) =>
+    effect.pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env })),
+      Effect.provide(layer),
+    );
+
+it.live("routes the selected Handy model through the running app's socket", () =>
+  Effect.gen(function* () {
+    const { join } = yield* Path.Path;
+    const handy = yield* fakeHandyBinary;
+    const socket = join(handy.directory, "transcribe.sock");
+    const prepared = yield* Deferred.make<void>();
+    yield* serveFakeHandy(socket, prepared);
+    yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const { models } = yield* speech.selectModel("local/handy");
+      expect(models.filter((model) => model.active).map((model) => model.id)).toEqual([
+        "local/handy",
+      ]);
+      expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe(
+        "from socket",
+      );
+      const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+      yield* Deferred.await(prepared);
+      expect(yield* stream.feed(pcm())).toEqual({ revision: 0, text: null });
+      expect(yield* stream.finish).toBe("from socket");
+    }).pipe(
+      Effect.scoped,
+      withHandyConfig({ T3CODE_HANDY_BIN: handy.binary, T3CODE_HANDY_SOCKET: socket }),
+    );
+    expect(yield* handy.spawned).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("falls back to headless Handy when its socket is missing", () =>
+  Effect.gen(function* () {
+    const { join } = yield* Path.Path;
+    const handy = yield* fakeHandyBinary;
+    yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const { models } = yield* speech.selectModel("local/handy");
+      expect(models.filter((model) => model.active).map((model) => model.id)).toEqual([
+        "local/handy",
+      ]);
+      expect(yield* speech.status).toMatchObject({ modelId: "local/handy", state: "ready" });
+      yield* speech.prepareModel;
+      expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe(
+        "from handy",
+      );
+      const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+      expect(yield* stream.feed(pcm())).toEqual({ revision: 0, text: null });
+      expect(yield* stream.finish).toBe("from handy");
+      expect(loadNative).not.toHaveBeenCalled();
+    }).pipe(
+      Effect.scoped,
+      withHandyConfig({
+        T3CODE_HANDY_BIN: handy.binary,
+        T3CODE_HANDY_SOCKET: join(handy.directory, "missing.sock"),
+      }),
+    );
+    expect(yield* handy.spawned).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("keeps a detached download exclusive until the transfer finishes", () =>

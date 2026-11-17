@@ -175,7 +175,7 @@ function ModelStats(props: { readonly model: EnvironmentSpeechModel; readonly la
       : score
         ? []
         : ([["languages", languageLabel(model.languages[0] ?? "")]] as const)),
-    ["size", formatBytes(model.size)],
+    ...(model.size > 0 ? ([["size", formatBytes(model.size)]] as const) : []),
   ];
   return (
     <Text textRole="footnote" className="text-foreground-muted tabular-nums">

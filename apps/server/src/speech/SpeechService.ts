@@ -25,6 +25,12 @@ import * as ServerSettings from "../serverSettings.ts";
 import { makeSpeechTextCorrector, normalizeSpeechCustomWords } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 import {
+  HANDY_SPEECH_MODEL_DESCRIPTION,
+  HANDY_SPEECH_MODEL_ID,
+  HANDY_SPEECH_MODEL_NAME,
+  makeHandy,
+} from "./handy.ts";
+import {
   DEFAULT_SPEECH_MODEL_ID,
   effectiveSpeechLanguage,
   getSpeechModel,
@@ -175,6 +181,9 @@ const make = Effect.gen(function* () {
   const clock = yield* Clock.Clock;
   const now = () => clock.currentTimeMillisUnsafe();
   const libc = platform === "linux" ? yield* HostProcess.LinuxLibc : undefined;
+  const handy = yield* makeHandy();
+  // Handy applies its own language setting; offer every catalog language so filters keep it.
+  const handyLanguages = [...new Set(SPEECH_MODELS.flatMap((definition) => definition.languages))];
   const unsupportedReason = isSpeechPlatformSupported(platform, architecture, libc)
     ? null
     : `voice transcription is not available on ${platform}-${architecture}`;
@@ -279,6 +288,17 @@ const make = Effect.gen(function* () {
 
   const selectedModel = (settings: SettingsSnapshot): SpeechModel =>
     getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
+  /** Where Handy is reachable when it is the selected model; a missing app falls back to the catalog. */
+  const selectedHandy = (settings: SettingsSnapshot) =>
+    settings.speechModelId === HANDY_SPEECH_MODEL_ID ? handy.available : Effect.undefined;
+  const transcribeWithHandy = (pcm: Float32Array) =>
+    handy
+      .transcribe(pcm)
+      .pipe(
+        Effect.mapError(
+          (cause) => new SpeechOperationError({ operation: "Handy transcription", cause }),
+        ),
+      );
 
   let silenceRetryAt = 0;
   const acquireSilenceModel = Effect.fn("SpeechService.acquireSilenceModel")(function* (
@@ -452,9 +472,27 @@ const make = Effect.gen(function* () {
     settings: SettingsSnapshot,
   ): Effect.fn.Return<EnvironmentSpeechStatus> {
     if (unsupportedReason) return { supported: false, reason: unsupportedReason };
+    const gpuDevices = yield* discoverGpuDevices.pipe(Effect.orElseSucceed(() => []));
+    if (yield* selectedHandy(settings))
+      return {
+        supported: true,
+        state: activeTranscriptions > 0 ? "transcribing" : "ready",
+        modelId: HANDY_SPEECH_MODEL_ID,
+        model: HANDY_SPEECH_MODEL_NAME,
+        size: 0,
+        supportsStreaming: false,
+        supportsBufferedStreaming: true,
+        supportsModelLinking: true,
+        supportsTranslation: false,
+        languages: handyLanguages,
+        supportsLanguageDetection: true,
+        acceleration: settings.speechAcceleration,
+        benchmarkTier: settings.speechAcceleration === "cpu" ? "cpu" : "accelerated",
+        modelUnloadTimeout: settings.speechModelUnloadTimeout,
+        gpuDevices,
+      };
     const definition = selectedModel(settings);
     const ready = yield* store.isReady(definition);
-    const gpuDevices = yield* discoverGpuDevices.pipe(Effect.orElseSucceed(() => []));
     const autoUsesCpu =
       gpuDevices.length === 0 ||
       autoCpuModel === definition.id ||
@@ -488,6 +526,9 @@ const make = Effect.gen(function* () {
     settings: SettingsSnapshot,
     includeBenchmarks: boolean,
   ): Effect.fn.Return<SpeechModels> {
+    const handySource = yield* handy.available;
+    const handySelected =
+      handySource !== undefined && settings.speechModelId === HANDY_SPEECH_MODEL_ID;
     const selected = selectedModel(settings);
     const models = yield* Effect.forEach(
       SPEECH_MODELS,
@@ -508,7 +549,7 @@ const make = Effect.gen(function* () {
               supportsStreaming: definition.supportsStreaming,
               supportsLanguageDetection: definition.supportsLanguageDetection,
               supportsTranslation: definition.supportsTranslation,
-              active: ready && selected.id === definition.id,
+              active: ready && !handySelected && selected.id === definition.id,
               state: operation
                 ? operation.verifying
                   ? "verifying"
@@ -523,7 +564,25 @@ const make = Effect.gen(function* () {
         ),
       { concurrency: "unbounded" },
     );
-    return { models };
+    if (handySource === undefined) return { models };
+    const handyModel: EnvironmentSpeechModel = {
+      id: HANDY_SPEECH_MODEL_ID,
+      name: HANDY_SPEECH_MODEL_NAME,
+      description: HANDY_SPEECH_MODEL_DESCRIPTION,
+      size: 0,
+      languages: handyLanguages,
+      accuracy: 0,
+      speed: 0,
+      recommended: false,
+      supportsStreaming: false,
+      supportsLanguageDetection: true,
+      supportsTranslation: false,
+      active: handySelected,
+      state: "installed",
+      // Removing it only stops using it; the app stays installed.
+      linkedFrom: handySource,
+    };
+    return { models: [...models, handyModel] };
   });
 
   const freshStatus = (operation: string) =>
@@ -552,7 +611,7 @@ const make = Effect.gen(function* () {
     ).trim();
   };
 
-  const prepareModel = readSettings("model preparation").pipe(
+  const prepareNativeModel = readSettings("model preparation").pipe(
     Effect.flatMap((settings) =>
       exclusive(
         "model preparation",
@@ -578,6 +637,10 @@ const make = Effect.gen(function* () {
       ),
     ),
   );
+  const prepareModel = readSettings("model preparation").pipe(
+    Effect.flatMap(selectedHandy),
+    Effect.flatMap((handyBinary) => (handyBinary === undefined ? prepareNativeModel : Effect.void)),
+  );
 
   const silenceModelPath = Effect.fn("SpeechService.silenceModelPath")(function* (
     loaded: LoadedModel,
@@ -602,6 +665,8 @@ const make = Effect.gen(function* () {
           if (pcm.length === 0) return "";
           activeTranscriptions += 1;
           return yield* Effect.gen(function* () {
+            if ((yield* selectedHandy(settings)) !== undefined)
+              return finalizeTranscript(yield* transcribeWithHandy(pcm), options, undefined);
             const definition = selectedModel(settings);
             const language = effectiveSpeechLanguage(definition, options.speechLanguage);
             const translateToEnglish =
@@ -745,6 +810,48 @@ const make = Effect.gen(function* () {
       }),
     );
     const settings = yield* readSettings(operation);
+    if ((yield* selectedHandy(settings)) !== undefined) {
+      yield* handy.prepare.pipe(
+        Effect.catchCause((cause) => Effect.logDebug("Handy prepare failed", cause)),
+        Effect.forkScoped,
+      );
+      // Handy only takes whole files, so the stream buffers audio until finish.
+      const chunks: Float32Array[] = [];
+      let handyBytes = 0;
+      return {
+        feed: (bytes: Uint8Array) =>
+          Effect.try({
+            try: () => {
+              if (finished || closed) throw new Error("Speech stream is not ready.");
+              if (
+                bytes.byteLength > SPEECH_STREAM_MAX_CHUNK_BYTES ||
+                handyBytes + bytes.byteLength > MAX_SPEECH_BYTES
+              )
+                throw new SpeechInvalidAudioError({
+                  byteLength: bytes.byteLength,
+                  message: "Speech stream audio limit exceeded.",
+                });
+              chunks.push(decodeSpeechPcm(bytes));
+              handyBytes += bytes.byteLength;
+              return { revision: 0, text: null };
+            },
+            catch: (cause) => speechError(operation, cause),
+          }),
+        finish: Effect.gen(function* () {
+          if (finished || closed)
+            return yield* speechError(operation, new Error("Speech stream is not ready."));
+          finished = true;
+          const pcm = new Float32Array(handyBytes / Float32Array.BYTES_PER_ELEMENT);
+          let offset = 0;
+          for (const chunk of chunks) {
+            pcm.set(chunk, offset);
+            offset += chunk.length;
+          }
+          if (pcm.length === 0) return "";
+          return finalizeTranscript(yield* transcribeWithHandy(pcm), options, undefined);
+        }),
+      } satisfies SpeechStream;
+    }
     const definition = selectedModel(settings);
     const language = effectiveSpeechLanguage(definition, options.speechLanguage);
     const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
@@ -903,10 +1010,17 @@ const make = Effect.gen(function* () {
     selectModel: Effect.fn("SpeechService.selectModel")((modelId) =>
       exclusive(
         "model selection",
-        attempt("model selection", async () => {
-          if (!getSpeechModel(modelId)) throw new SpeechModelNotFoundError({ modelId });
-          await disposeModel();
-        }),
+        (modelId === HANDY_SPEECH_MODEL_ID
+          ? handy.available
+          : Effect.succeed(getSpeechModel(modelId)?.id)
+        ).pipe(
+          Effect.flatMap((available) =>
+            attempt("model selection", async () => {
+              if (!available) throw new SpeechModelNotFoundError({ modelId });
+              await disposeModel();
+            }),
+          ),
+        ),
       ).pipe(
         Effect.andThen(writeSettings("model selection", { speechModelId: modelId })),
         Effect.andThen(modelsEffect),
@@ -925,16 +1039,23 @@ const make = Effect.gen(function* () {
           exclusive(
             "model removal",
             Effect.gen(function* () {
-              const definition = getSpeechModel(modelId);
-              if (!definition) return yield* new SpeechModelNotFoundError({ modelId });
-              yield* attempt("model removal", async () => {
-                await loading?.catch(() => undefined);
-                if (loadedModelId === modelId) await disposeModel();
-              });
-              yield* store
-                .remove(definition)
-                .pipe(Effect.mapError((cause) => speechError("model removal", cause)));
-              if (selectedModel(settings).id !== modelId) return undefined;
+              // Removing Handy only stops using it; the app is never touched.
+              if (modelId !== HANDY_SPEECH_MODEL_ID) {
+                const definition = getSpeechModel(modelId);
+                if (!definition) return yield* new SpeechModelNotFoundError({ modelId });
+                yield* attempt("model removal", async () => {
+                  await loading?.catch(() => undefined);
+                  if (loadedModelId === modelId) await disposeModel();
+                });
+                yield* store
+                  .remove(definition)
+                  .pipe(Effect.mapError((cause) => speechError("model removal", cause)));
+              }
+              const selectedId =
+                (yield* selectedHandy(settings)) !== undefined
+                  ? HANDY_SPEECH_MODEL_ID
+                  : selectedModel(settings).id;
+              if (selectedId !== modelId) return undefined;
               const candidates = yield* Effect.forEach(
                 SPEECH_MODELS.filter((candidate) => candidate.id !== modelId),
                 (candidate) =>
@@ -966,7 +1087,10 @@ const make = Effect.gen(function* () {
       );
       const first = linked[0];
       if (first === undefined) return yield* new SpeechModelNotFoundError({ modelId: source });
-      if (!(yield* store.isReady(selectedModel(settings))))
+      if (
+        (yield* selectedHandy(settings)) === undefined &&
+        !(yield* store.isReady(selectedModel(settings)))
+      )
         yield* writeSettings("model linking", { speechModelId: first });
       return yield* modelsEffect;
     }),
